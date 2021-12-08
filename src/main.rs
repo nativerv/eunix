@@ -105,3 +105,4 @@ mod tests {
   }
 }
 
+// vim:ts=2 sw=2
