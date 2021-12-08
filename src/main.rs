@@ -1,12 +1,11 @@
 use std::fs;
-use serbia::serbia;
 use serde::{Deserialize, Serialize};
-use std::fs::File;
 
-const BLOCK_SIZE: usize = 512;
-//const DISK_PATH: = "./disk.enxvd";
+const BLOCK_DATA_SIZE: usize = 512;
+static DISK_PATH: &str = "./disk.enxvd";
 
 #[derive(Serialize, Deserialize)]
+#[repr(C)]
 struct Superblock {
   num_inodes: usize,
   num_blocks: i32,
@@ -14,20 +13,23 @@ struct Superblock {
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
+#[repr(C)]
 struct INode<'a> {
   size: i32,
   name: &'a str,
 }
 
-#[serbia]
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+#[derive(Clone, Serialize, Deserialize)]
+#[repr(C)]
 struct Block {
   size: i32,
-  data: [u8; BLOCK_SIZE],
+  data: Vec<u8>,
   next_block_idx: i32,
 }
 
 #[derive(Serialize, Deserialize)]
+#[repr(C)]
 struct FS<'a> {
   superblock: Superblock,
 
@@ -52,14 +54,14 @@ impl FS<'_> {
 
     let blocks = vec![Box::new(Block {
       size: -1,
-      data: [0; BLOCK_SIZE],
+      data: vec![0; BLOCK_DATA_SIZE],
       next_block_idx: -1,
     }); superblock.num_inodes];
 
     Self { 
       superblock,
       inodes,
-      blocks: Vec::new(),
+      blocks,
     } 
   }
 
@@ -72,7 +74,7 @@ impl FS<'_> {
 
   fn sync(&self) {
     let bytes = self.get_as_bytes();
-    fs::write("./disk.enxvd", &bytes).unwrap();
+    fs::write(DISK_PATH, &bytes).unwrap();
   }
 }
 
@@ -89,9 +91,17 @@ mod tests {
   fn fs_create() {
     let fs = FS::new();
 
-    println!("Hex: {:02X?}", fs.get_as_bytes());
+    // println!("Hex: {:02X?}", fs.get_as_bytes());
     //println!("{:?}", fs.get_as_bytes());
-    println!("Dec: {:?}", bincode::serialize(&fs.superblock).unwrap());
+    println!("&fs.superblock.num_inodes: {:?}", bincode::serialize(&fs.superblock.num_inodes).unwrap());
+    println!("&fs.superblock.num_blocks: {:?}", bincode::serialize(&fs.superblock.num_blocks).unwrap());
+    println!("&fs.superblock.block_size: {:?}", bincode::serialize(&fs.superblock.block_size).unwrap());
+
+    println!("&fs.inodes[0].name: {:?}", bincode::serialize(&fs.inodes[0].name).unwrap());
+    println!("&fs.inodes[0].size: {:?}", bincode::serialize(&fs.inodes[0].size).unwrap());
+
+    println!("&fs.blocks[0].size: {:?}", bincode::serialize(&fs.blocks[0].size).unwrap());
+    println!("&fs.blocks[0].data: {:?}", bincode::serialize(&fs.blocks[0].data).unwrap());
   }
 }
 
