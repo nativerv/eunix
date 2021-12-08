@@ -1,0 +1,8 @@
+machine:
+  devices:
+    tty1:
+      path: ./devices/tty1.enxtty
+      type: tty
+    disk1:
+      path: ./devices/disk1.enxvd
+      type: block

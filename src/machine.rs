@@ -12,7 +12,7 @@ pub struct DirectoryEntry<'a> {
   next_dir_entry_offset: AddressSize,
 }
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum VirtualDevice {
   BlockDevice,
   TTYDevice,
@@ -31,12 +31,14 @@ pub enum VirtualDevice {
 //   }
 // }
 
+#[derive(Debug)]
 pub struct OperatingSystem<'a> {
-  kernel: Kernel<'a>,
+  pub kernel: Kernel<'a>,
 }
 
 pub type DeviceTable = BTreeMap<String, VirtualDevice>; 
 
+#[derive(Debug)]
 pub struct Machine {
   devices: DeviceTable,
   is_booted: bool,
@@ -44,7 +46,7 @@ pub struct Machine {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct MachineSchema {
-  devices: BTreeMap<String, BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>>,
+  machine: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
 }
 
 impl Machine {
@@ -56,13 +58,11 @@ impl Machine {
       serde_yaml::from_reader::<_, MachineSchema>(machine_schema_reader)
         .unwrap();
 
-    let devices: DeviceTable = machine_schema.devices
-      .get("machine")
-      .unwrap()
+    let devices: DeviceTable = machine_schema.machine
       .get("devices")
       .unwrap()
       .into_iter()
-      .map(|(name, device)| {
+      .map(|(_name, device)| {
         let device_path = Path::new(&machine_schema_path).join(device.get("path").unwrap());
         let device_type = device.get("type").unwrap();
 
@@ -80,9 +80,11 @@ impl Machine {
       devices,
     }
   }
-  // pub fn get_devices(&self) -> &DeviceTable<'a> {
-  //   self.devices
-  // }
+  pub fn get_devices(&self) -> &DeviceTable {
+    &self.devices
+  }
+  pub fn run(&self, os: OperatingSystem) {
+  }
 }
 
 // https://doc.rust-lang.org/std/collections/struct.BTreeMap.html
