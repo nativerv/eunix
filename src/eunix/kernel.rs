@@ -4,13 +4,16 @@ use std::collections::BTreeMap;
 
 use super::fs::{AddressSize, OpenFlags, VDirectoryEntry, Filesystem, RegisteredFilesystem};
 
+#[derive(Debug)]
 pub enum Errno {
   EACCES,
   EPERM,
   EISDIR,
   ENOTDIR,
   ENAMETOOLONG,
-  ENOSYS
+  ENOSYS,
+  ENOENT,
+  EIO,
 }
 
 #[derive(Debug)]
