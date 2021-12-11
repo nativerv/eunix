@@ -1,7 +1,9 @@
-use std::{collections::BTreeMap, io::Error};
+use std::collections::BTreeMap;
 use core::fmt::Debug;
 
-pub type AddressSize = u64;
+use super::kernel::Errno;
+
+pub type AddressSize = u32;
 pub type FileMode = u16;
 pub type FileDescriptor = AddressSize;
 
@@ -44,10 +46,10 @@ pub trait Filesystem {
   // либо ошибку если pathname_from_fs_root
   // не существует
   fn read_bytes( &self, pathname: &str, count: AddressSize)
-    -> Result<&[u8], Error>;
+    -> Result<&[u8], Errno>;
 
   fn write_bytes(&mut self, pathname: &str)
-    -> Result<(), Error>;
+    -> Result<(), Errno>;
 
   fn read_dir(&self, pathname: &str)
     -> &[VDirectoryEntry];
@@ -61,6 +63,9 @@ pub trait Filesystem {
 
   fn get_name(&self)
     -> String;
+
+  // fn new()
+  //   -> Self;
 }
 
 impl Debug for dyn Filesystem {
@@ -79,6 +84,14 @@ pub struct FileDescription {
 pub struct VFS<'a> {
   pub mount_points: BTreeMap<&'a str, Box<dyn Filesystem>>,
   pub open_files: BTreeMap<&'a str, FileDescription>,
+}
+
+pub enum RegisteredFilesystem {
+  devfs,
+  // procfs(ProcessFilesystem),
+  // sysfs(SysFilesystem),
+  e5fs,
+  // tmpfs(MemFilesystem),
 }
 
 

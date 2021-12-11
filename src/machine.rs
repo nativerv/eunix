@@ -69,8 +69,8 @@ impl Machine {
         let a = String::from_str(device_path.to_str().unwrap()).unwrap();
         (a, match device_type.as_ref() {
           "block" => VirtualDevice::BlockDevice,
-          "tty" => VirtualDevice::BlockDevice,
-          _ => panic!(),
+          "tty" => VirtualDevice::TTYDevice,
+          _ => panic!("unknown device type in {}", machine_schema_path),
         })
       })
       .collect();

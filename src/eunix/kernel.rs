@@ -2,7 +2,7 @@ use crate::eunix::fs::{FileDescription, FileDescriptor, VFS};
 use crate::machine::{DeviceTable, VirtualDevice};
 use std::collections::BTreeMap;
 
-use super::fs::{AddressSize, OpenFlags, VDirectoryEntry};
+use super::fs::{AddressSize, OpenFlags, VDirectoryEntry, Filesystem, RegisteredFilesystem};
 
 pub enum Errno {
   EACCES,
@@ -10,6 +10,7 @@ pub enum Errno {
   EISDIR,
   ENOTDIR,
   ENAMETOOLONG,
+  ENOSYS
 }
 
 #[derive(Debug)]
@@ -25,7 +26,9 @@ impl Process<'_> {}
 pub struct Kernel<'a> {
   vfs: VFS<'a>,
   processes: Vec<Process<'a>>,
+  current_process: u32,
   block_devices: DeviceTable,
+  // registered_filesystems: BTreeMap<>,
 }
 
 impl<'a> Kernel<'a> {
@@ -36,6 +39,7 @@ impl<'a> Kernel<'a> {
         open_files: BTreeMap::new(),
       },
       processes: Vec::new(),
+      current_process: 1,
       block_devices: devices
         .into_iter()
         .filter(|(_, device_type)| **device_type == VirtualDevice::BlockDevice)
@@ -45,6 +49,9 @@ impl<'a> Kernel<'a> {
   }
   fn get_block_devices(&self) -> &DeviceTable {
     &self.block_devices
+  }
+  fn get_current_process(&self) -> u32 {
+    self.current_process
   }
 }
 
@@ -62,9 +69,23 @@ impl <'a> Kernel<'a> {
     todo!();
   }
   pub fn getdents(&self, file_descriptor: FileDescriptor) -> Result<&'a [VDirectoryEntry<'a>], Errno> {
+    // let process: Process = self.processes.get((self.get_current_process())).unwrap();
+    //
+    // let &file_description = process.file_descriptors.get(&file_descriptor).unwrap();
+
     todo!();
   }
-  pub fn mount(&mut self, source: &str, target: &str) -> Result<(), Errno> {
+  pub fn mount(&mut self, source: &str, target: &str, filesystem: RegisteredFilesystem) -> Result<(), Errno> {
+    // self.vfs.mount_points.append((target, match filesystem {
+    //   RegisteredFilesystem::e5fs => {
+    //     todo!();
+    //     // crate::eunix::e5fs::E5FSFilesystem::new()
+    //   },
+    //   RegisteredFilesystem::devfs => {
+    //     crate::eunix::devfs::DeviceFilesystem::new(self.get_block_devices())
+    //   },
+    // }));
+
     todo!();
   }
   pub fn umount(target: &str) -> Result<(), Errno> {
