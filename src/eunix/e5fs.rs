@@ -3,6 +3,7 @@ use std::io::SeekFrom;
 use std::io::Write;
 
 use super::fs::AddressSize;
+use super::fs::FileMode;
 use super::kernel::Errno;
 
 pub struct DirectoryEntry<'a> {
@@ -17,7 +18,7 @@ pub type Directory<'a> = Vec<DirectoryEntry<'a>>;
 // 2 + 8 + 4 + 4 + 8 + 4 + 4 + 4 + (8 * 16)
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct INode {
-  mode: u16,
+  mode: FileMode,
   links_count: AddressSize,
   uid: u32,
   gid: u32,
@@ -66,6 +67,7 @@ pub struct E5FSFilesystemBuilder {
   first_inode_address: AddressSize,
   first_block_address: AddressSize,
   block_table_size: AddressSize,
+  block_data_size: AddressSize,
 }
 
 impl E5FSFilesystemBuilder {
@@ -94,10 +96,10 @@ impl E5FSFilesystemBuilder {
     let superblock_size = std::mem::size_of::<Superblock>() as AddressSize;
     let inode_size = std::mem::size_of::<INode>() as AddressSize;
 
-    // block - data_pointer + data_size
-    let block_size = std::mem::size_of::<Block>() as AddressSize
-      - std::mem::size_of::<usize>() as AddressSize
+    // next_block_number + data
+    let block_size = std::mem::size_of::<AddressSize>() as AddressSize
       + block_data_size;
+    
 
     let inodes_count = ((device_size as f32 * percent_inodes) / inode_size as f32) as AddressSize;
     let blocks_count =
@@ -145,6 +147,7 @@ impl E5FSFilesystemBuilder {
       first_block_address,
 
       block_table_size,
+      block_data_size,
     })
   }
 }
@@ -288,17 +291,17 @@ impl E5FSFilesystem {
   fn read_block(e5fs_builder: &mut E5FSFilesystemBuilder, block_number: AddressSize) -> Block {
     use std::mem::size_of;
 
-    let mut inode_bytes = vec![0u8; e5fs_builder.superblock_size.try_into().unwrap()];
+    let mut block_bytes = vec![0u8; e5fs_builder.block_size.try_into().unwrap()];
 
-    // Get absolute address of inode
-    let address = e5fs_builder.first_inode_address + block_number * e5fs_builder.inode_size;
+    // Get absolute address of block
+    let address = e5fs_builder.first_block_address + block_number * e5fs_builder.block_size;
 
     // Seek to it and read bytes
     e5fs_builder.realfile.seek(SeekFrom::Start(address.try_into().unwrap()).try_into().unwrap()).unwrap();
-    e5fs_builder.realfile.read_exact(&mut inode_bytes).unwrap();
+    e5fs_builder.realfile.read_exact(&mut block_bytes).unwrap();
 
-    let next_block_address = AddressSize::from_le_bytes(inode_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap()); // to_le_bytes()).unwrap();
-    let data = inode_bytes;
+    let next_block_address = AddressSize::from_le_bytes(block_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
+    let data = block_bytes;
 
     Block {
       next_block_address,
@@ -345,7 +348,7 @@ impl E5FSFilesystem {
     }
   }
 
-  pub fn read_superblock(e5fs_builder: &mut E5FSFilesystemBuilder) -> Superblock {
+  fn read_superblock(e5fs_builder: &mut E5FSFilesystemBuilder) -> Superblock {
     use std::mem::size_of;
 
     let mut superblock_bytes = vec![0u8; e5fs_builder.superblock_size.try_into().unwrap()];
@@ -447,10 +450,6 @@ mod tests {
 
     let mut e5fs_builder = E5FSFilesystemBuilder::new(tempfile.as_str(), 0.05, 4096).unwrap();
 
-    // E5FSFilesystem::mkfs(&mut e5fs_builder);
-
-    println!("inodes_count: {}", e5fs_builder.inodes_count);
-
     let inode_indices = 0..10;
     let inodes = inode_indices.clone().fold(Vec::new(), |mut vec, i| {
       vec.push(INode {
@@ -480,15 +479,8 @@ mod tests {
         block_addresses: [i % 5; 16],
       });
 
-      let address = e5fs_builder.first_inode_address + i * e5fs_builder.inode_size;
-
-      println!("inode {} address: {}", i, address);
-
       vec
     });
-    println!("inode_size: {}", e5fs_builder.inode_size);
-    println!("first_inode_address: {}", e5fs_builder.first_inode_address);
-    println!("tempfile: {}", &tempfile);
 
     inodes
       .iter()
@@ -504,6 +496,40 @@ mod tests {
         let inode_from_file = E5FSFilesystem::read_inode(&mut e5fs_builder, inode_number);
 
         assert_eq!(*inode, inode_from_file);
+      });
+  }
+
+  #[test]
+  fn write_block_works() {
+    let tempfile = mktemp().to_owned();
+    mkenxvd("1M".to_owned(), tempfile.clone());
+
+    let mut e5fs_builder = E5FSFilesystemBuilder::new(tempfile.as_str(), 0.05, 4096).unwrap();
+
+    let block_indices = 0..10;
+    let blocks = block_indices.clone().fold(Vec::new(), |mut vec, i| {
+      vec.push(Block {
+        next_block_address: i,
+        data: vec![(i % 255) as u8; e5fs_builder.block_data_size as usize],
+      });
+
+      vec
+    });
+
+    blocks
+      .iter()
+      .zip(block_indices.clone())
+      .for_each(|(block, block_number)| {
+        E5FSFilesystem::write_block(&mut e5fs_builder, block, block_number).unwrap();
+      });
+
+    blocks
+      .iter()
+      .zip(block_indices.clone())
+      .for_each(|(block, block_number)| {
+        let block_from_file = E5FSFilesystem::read_block(&mut e5fs_builder, block_number);
+
+        assert_eq!(*block, block_from_file);
       });
   }
 }

@@ -21,6 +21,3 @@ pub fn main() {
   // println!();
   // println!("OS: {:?}", os);
 }
-
-
-// vim:ts=2 sw=2
