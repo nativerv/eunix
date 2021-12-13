@@ -8,3 +8,9 @@ edition = "2021"
 [dependencies]
 serde = { version = "1.0.130", features = ["derive"] }
 serde_yaml = "0.8"
+
+[profile.dev]
+debug = true
+
+[profile.release]
+debug = true

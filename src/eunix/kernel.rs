@@ -14,6 +14,7 @@ pub enum Errno {
   ENOSYS,
   ENOENT,
   EIO,
+  EINVAL,
 }
 
 #[derive(Debug)]
