@@ -17,30 +17,98 @@ pub const NO_ADDRESS: AddressSize = AddressSize::MAX;
 #[allow(dead_code)]
 pub const NOBODY: Id = Id::MAX;
 
-#[allow(dead_code)]
-pub const NOLINKS: u32 = u32::MAX;
-
+//    free?
+///   | unused
+///   | |   filetype
+///   | |   |   user
+///   | |   |   |   group
+///   | |   |   |   |   others
+///   | |   |   |   |   |
+///   f xxx ttt rwx rwx rwx
+/// 0b0_000_000_110_000_000
+/// Where:
+/// filetype:
+///   000 - file   100 - char
+///   001 - dir    101 - unused
+///   010 - sys    110 - unused
+///   011 - block  111 - unused
 #[derive(Debug, PartialEq, Eq)]
 pub struct FileMode(pub u16);
 
 impl Default for FileMode {
   fn default() -> Self {
-      Self(0b0000000_110_000_000)
+      Self(0b0_000_000_110_000_000)
   }
 }
 
-// impl std::ops::Add for FileMode {
-//   fn add(self, rhs: Self) -> Self::Output {
-//       Self(self.0 + rhs)
-//   }
-// }
-
 impl FileMode {
+  #[allow(dead_code)]
   pub fn new(raw: u16) -> Self {
     Self(raw)
   }
+
+  #[allow(dead_code)]
   pub fn zero() -> Self {
     Self(0b0000000_000_000_000)
+  }
+
+  #[allow(dead_code)]
+  pub fn with_free(&self, mask: u8) -> Self {
+    let mut current = format!("{:016b}", self.0);
+    let mask = format!("{:01b}", mask);
+
+    current.replace_range(0..1, &mask);
+    Self(u16::from_str_radix(&current, 2).expect(&format!("can't parse in free: {}", &current)))
+  }
+  
+  #[allow(dead_code)]
+  pub fn with_type(&self, mask: u8) -> Self {
+    let mut current = format!("{:016b}", self.0);
+    let mask = format!("{:03b}", mask);
+
+    current.replace_range(4..7, &mask);
+    Self(u16::from_str_radix(&current, 2).expect(&format!("can't parse in type: {}", &current)))
+  }
+
+  #[allow(dead_code)]
+  pub fn with_user(&self, mask: u8) -> Self {
+    let mut current = format!("{:016b}", self.0);
+    let mask = format!("{:03b}", mask);
+
+    current.replace_range(7..10, &mask);
+    Self(u16::from_str_radix(&current, 2).expect(&format!("can't parse in user: {}", &current)))
+  }
+
+  #[allow(dead_code)]
+  pub fn with_group(&self, mask: u8) -> Self {
+    let mut current = format!("{:016b}", self.0);
+    let mask = format!("{:03b}", mask);
+
+    current.replace_range(10..13, &mask);
+    Self(u16::from_str_radix(&current, 2).expect(&format!("can't parse in group: {}", &current)))
+  }
+
+  #[allow(dead_code)]
+  pub fn with_others(&self, mask: u8) -> Self {
+    let mut current = format!("{:016b}", self.0);
+    let mask = format!("{:03b}", mask);
+    
+    current.replace_range(13..16, &mask);
+    Self(u16::from_str_radix(&current, 2).expect(&format!("can't parse in others: {}", &current)))
+  }
+
+  #[allow(dead_code)]
+  pub fn get_raw(&self) -> u16 {
+    self.0
+  }
+
+  /// gets the bit at position `n`. Bits are numbered from 0 (least significant) to 31 (most significant).
+  fn get_bit_at(input: u32, n: u8) -> bool {
+    if n < 32 {
+      input & (1 << n) != 0
+    } else {
+      false
+    }
   }
 }
 
@@ -141,5 +209,23 @@ pub enum RegisteredFilesystem {
   // tmpfs(MemFilesystem),
 }
 
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn file_mode_works() {
+    let expected: u16 = 0b1_000_011_101_110_001;
+
+    let filemode = FileMode::zero()
+      .with_free(0b1)
+      .with_type(0b011)
+      .with_user(0b101)
+      .with_group(0b110)
+      .with_others(0b001);
+
+    assert_eq!(filemode.get_raw(), expected);
+  }
+}
 
 // vim:ts=2 sw=2

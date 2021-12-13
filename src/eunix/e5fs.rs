@@ -9,7 +9,6 @@ use crate::util::unixtime;
 use super::fs::AddressSize;
 use super::fs::FileMode;
 use super::fs::Id;
-use super::fs::NOLINKS;
 use super::fs::NO_ADDRESS;
 use super::kernel::Errno;
 
@@ -26,7 +25,9 @@ pub struct DirectoryEntry<'a> {
   next_dir_entry_offset: AddressSize,
 }
 
-pub type Directory<'a> = Vec<DirectoryEntry<'a>>;
+pub struct Directory<'a> {
+  entries: Vec<DirectoryEntry<'a>>,
+}
 
 // 2 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + (4 * 16)
 // 2 + 8 + 4 + 4 + 8 + 4 + 4 + 4 + (8 * 16)
@@ -47,7 +48,7 @@ impl Default for INode {
   fn default() -> Self {
     Self {
       mode: FileMode::default(),
-      links_count: NOLINKS,
+      links_count: 0,
       file_size: 0,
       uid: NOBODY,
       gid: NOBODY,
@@ -247,12 +248,14 @@ pub struct E5FSFilesystem {
 }
 
 impl E5FSFilesystem {
+  #[allow(dead_code)]
   pub fn new(device_realpath: &str, inode_table_percentage: f32, block_data_size: AddressSize) -> Result<Self, Errno> {
     let mut fs_info = 
       E5FSFilesystemBuilder::new(
         device_realpath, 
         inode_table_percentage, 
-        block_data_size)
+        block_data_size
+      )
       .unwrap();
 
     Ok(Self {
@@ -260,6 +263,7 @@ impl E5FSFilesystem {
       fs_info,
     })
   }
+
   pub fn mkfs(e5fs: &mut E5FSFilesystem) -> Result<(), Errno> {
     let superblock = Superblock::new(&mut e5fs.fs_info);
 
@@ -272,7 +276,15 @@ impl E5FSFilesystem {
     Ok(())
   }
 
+  fn write_dir(&mut self) -> Result<Directory, Errno> {
+
+    todo!();
+  }
+
+  // fn claim_free_inode(&mut self) -> Result<AddressSize, Errno> {}
+
   /// Replace specified inode in `free_inode_numbers` with `NO_ADDRESS`
+  #[allow(dead_code)]
   fn claim_free_inode(&mut self) -> Result<AddressSize, Errno> {
     let maybe_free_inode_number = self.superblock.free_inode_numbers
       .iter()
@@ -300,6 +312,7 @@ impl E5FSFilesystem {
   }
 
   /// Replace specified inode in `free_inode_numbers` with `NO_ADDRESS`
+  #[allow(dead_code)]
   fn claim_free_block(&mut self) -> Result<AddressSize, Errno> {
     // 1. Basically try to find first chunk with free block number != NO_ADDRESS
     let maybe_free_block_numbers = (self.fs_info.first_flb_block_number..self.fs_info.blocks_count)
@@ -333,7 +346,7 @@ impl E5FSFilesystem {
 
     let free_block_number = free_block_numbers.get(free_block_number_index).unwrap().to_owned();
 
-    // Then write `NO_ADDRESS` in place of `free_block_number` that we've found
+    // 3. Then write `NO_ADDRESS` in place of `free_block_number` that we've found
     *free_block_numbers.get_mut(free_block_number_index).unwrap() = NO_ADDRESS;
 
     let block = self.read_block(fbl_block_number);
@@ -343,7 +356,7 @@ impl E5FSFilesystem {
       data: free_block_numbers.iter().flat_map(|x| x.to_le_bytes()).collect(),
     }, fbl_block_number).unwrap();
 
-    // And return number of that block
+    // 4. And return number of that block
     Ok(free_block_number)
   }
 
@@ -353,7 +366,8 @@ impl E5FSFilesystem {
     let free_inode_number = self.claim_free_inode()?;
 
     let mut inode = INode {
-      links_count: NOLINKS,
+      mode: FileMode::default().with_free(0),
+      links_count: 0,
       file_size: 0,
       uid: NOBODY,
       gid: NOBODY,
@@ -398,6 +412,7 @@ impl E5FSFilesystem {
     Ok(())
   }
   
+  #[allow(dead_code)]
   fn write_inode(&mut self, inode: &INode, inode_number: AddressSize) -> Result<(), Errno> {
     // Guard for block_number
     if inode_number > self.fs_info.inodes_count {
@@ -426,6 +441,7 @@ impl E5FSFilesystem {
     Ok(())
   }
 
+  #[allow(dead_code)]
   fn write_superblock(&mut self, superblock: &Superblock) -> Result<(), Errno> {
     // Read bytes from file
     let mut superblock_bytes = Vec::new();
@@ -449,6 +465,7 @@ impl E5FSFilesystem {
     Ok(())
   }
 
+  #[allow(dead_code)]
   fn read_block(&mut self, block_number: AddressSize) -> Block {
     use std::mem::size_of;
 
@@ -470,6 +487,7 @@ impl E5FSFilesystem {
     }
   }
 
+  #[allow(dead_code)]
   fn read_inode(&mut self, inode_number: AddressSize) -> INode {
     use std::mem::size_of;
 
@@ -509,6 +527,7 @@ impl E5FSFilesystem {
     }
   }
 
+  #[allow(dead_code)]
   fn read_superblock(&mut self) -> Superblock {
     use std::mem::size_of;
 
@@ -552,6 +571,7 @@ impl E5FSFilesystem {
   }
 
   /// Parse one fbl block and return it for further use
+  #[allow(dead_code)]
   fn read_block_numbers_from_block(block: &Block) -> Vec<AddressSize> {
     use std::mem::size_of;
     let data = block.data.clone();
@@ -562,6 +582,18 @@ impl E5FSFilesystem {
       .collect::<Vec<AddressSize>>()
   }
 
+  /// Parse one fbl block and return it for further use
+  fn read_directory_entries_from_block(block: &Block) -> Vec<AddressSize> {
+    use std::mem::size_of;
+    let data = block.data.clone();
+
+    data
+      .chunks(size_of::<AddressSize>())
+      .map(|chunk| AddressSize::from_le_bytes(chunk.try_into().unwrap()))
+      .collect::<Vec<AddressSize>>()
+  }
+
+  #[allow(dead_code)]
   fn generate_fbl(&self) -> Vec<Vec<AddressSize>> {
     // Basically what we do in the next ~30 lines:
     // 1. Generate addresses of free blocks
@@ -600,6 +632,7 @@ impl E5FSFilesystem {
     fbl_chunks
   }
 
+  #[allow(dead_code)]
   fn write_fbl(&mut self) {
     let fbl_chunks = self.generate_fbl();
 
