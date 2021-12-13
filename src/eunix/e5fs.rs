@@ -34,23 +34,25 @@ pub struct INode {
   atime: u32,
   mtime: u32,
   ctime: u32,
-  block_addresses: [AddressSize; 16],
+  block_numbers: [AddressSize; 16],
 }
 
 // 16 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + (4 * 16) + (4 * 16)
 // 16 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + (8 * 16) + (8 * 16)
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Default, Debug, PartialEq)]
 pub struct Superblock {
   filesystem_type: [u8; 16],
   filesystem_size: AddressSize, // in blocks
   inode_table_size: AddressSize,
+  inode_table_percentage: f32,
   free_inodes_count: AddressSize,
   free_blocks_count: AddressSize,
   inodes_count: AddressSize,
   blocks_count: AddressSize,
   block_size: AddressSize,
-  free_inode_addresses: [AddressSize; 16],
-  free_block_addresses: [AddressSize; 16],
+  block_data_size: AddressSize,
+  free_inode_numbers: [AddressSize; 16],
+  free_block_numbers: [AddressSize; 16],
 }
 
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -79,12 +81,13 @@ pub struct E5FSFilesystemBuilder {
   free_blocks_count: AddressSize,
   address_size: AddressSize,
   addresses_per_fbl_chunk: AddressSize,
+  inode_table_percentage: f32,
 }
 
 impl E5FSFilesystemBuilder {
-  pub fn new(device_realpath: &str, percent_inodes: f32, block_data_size: AddressSize) -> Result<Self, &'static str> {
+  pub fn new(device_realpath: &str, inode_table_percentage: f32, block_data_size: AddressSize) -> Result<Self, &'static str> {
     // Guard for percent_inodes
-    match percent_inodes {
+    match inode_table_percentage {
       n if n < 0f32 => return Err("percent_inodes can't be less than 0"),
       n if n > 1f32 => return Err("percent_inodes can't be more than 1"),
       _ => (),
@@ -114,9 +117,9 @@ impl E5FSFilesystemBuilder {
       + block_data_size;
     
 
-    let inodes_count = ((device_size as f32 * percent_inodes) / inode_size as f32) as AddressSize;
+    let inodes_count = ((device_size as f32 * inode_table_percentage) / inode_size as f32) as AddressSize;
     let blocks_count =
-      ((device_size as f32 * (1f32 - percent_inodes)) / block_size as f32) as AddressSize;
+      ((device_size as f32 * (1f32 - inode_table_percentage)) / block_size as f32) as AddressSize;
 
     let inode_table_size = inode_size * inodes_count;
 
@@ -167,6 +170,7 @@ impl E5FSFilesystemBuilder {
       free_blocks_count,
       address_size,
       addresses_per_fbl_chunk,
+      inode_table_percentage,
     })
   }
 }
@@ -197,6 +201,9 @@ impl E5FSFilesystem {
     let _first_block_address = e5fs_builder.first_block_address;
     let free_blocks_count = e5fs_builder.free_blocks_count;
 
+    let inode_table_percentage = e5fs_builder.inode_table_percentage;
+    let block_data_size = e5fs_builder.block_data_size;
+
     let mut free_inodes = [0; 16];
     for i in 0..16 {
       free_inodes[i as usize] = superblock_size + (inode_size * i);
@@ -213,13 +220,15 @@ impl E5FSFilesystem {
       ],
       filesystem_size, // in blocks
       inode_table_size,
+      inode_table_percentage,
       free_inodes_count: inodes_count,
       free_blocks_count: blocks_count,
       inodes_count,
       blocks_count,
       block_size,
-      free_inode_addresses: free_inodes,
-      free_block_addresses: free_blocks,
+      block_data_size,
+      free_inode_numbers: free_inodes,
+      free_block_numbers: free_blocks,
     };
 
     // Write Superblock
@@ -270,7 +279,7 @@ impl E5FSFilesystem {
     inode_bytes.write(&inode.atime.to_le_bytes()).unwrap();
     inode_bytes.write(&inode.mtime.to_le_bytes()).unwrap();
     inode_bytes.write(&inode.ctime.to_le_bytes()).unwrap();
-    inode_bytes.write(&inode.block_addresses.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>()).unwrap();
+    inode_bytes.write(&inode.block_numbers.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>()).unwrap();
 
     // Get absolute address of inode
     let address = e5fs_builder.first_inode_address + inode_number * e5fs_builder.inode_size;
@@ -288,13 +297,15 @@ impl E5FSFilesystem {
     superblock_bytes.write(&superblock.filesystem_type).unwrap();
     superblock_bytes.write(&superblock.filesystem_size.to_le_bytes()).unwrap();
     superblock_bytes.write(&superblock.inode_table_size.to_le_bytes()).unwrap();
+    superblock_bytes.write(&superblock.inode_table_percentage.to_le_bytes()).unwrap();
     superblock_bytes.write(&superblock.free_inodes_count.to_le_bytes()).unwrap();
     superblock_bytes.write(&superblock.free_blocks_count.to_le_bytes()).unwrap();
     superblock_bytes.write(&superblock.inodes_count.to_le_bytes()).unwrap();
     superblock_bytes.write(&superblock.blocks_count.to_le_bytes()).unwrap();
     superblock_bytes.write(&superblock.block_size.to_le_bytes()).unwrap();
-    superblock_bytes.write(&superblock.free_inode_addresses.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>()).unwrap();
-    superblock_bytes.write(&superblock.free_block_addresses.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>()).unwrap();
+    superblock_bytes.write(&superblock.block_data_size.to_le_bytes()).unwrap();
+    superblock_bytes.write(&superblock.free_inode_numbers.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>()).unwrap();
+    superblock_bytes.write(&superblock.free_block_numbers.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>()).unwrap();
 
     // Seek to 0 and write bytes
     e5fs_builder.realfile.seek(SeekFrom::Start(0)).unwrap();
@@ -359,7 +370,7 @@ impl E5FSFilesystem {
       atime,
       mtime,
       ctime,
-      block_addresses: block_addresses.try_into().unwrap(),
+      block_numbers: block_addresses.try_into().unwrap(),
     }
   }
 
@@ -372,13 +383,15 @@ impl E5FSFilesystem {
     e5fs_builder.realfile.read_exact(&mut superblock_bytes).unwrap();
 
     let filesystem_type: [u8; 16] = superblock_bytes.drain(0..16).as_slice().try_into().unwrap(); 
-    let filesystem_size = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap()); // to_le_bytes()).unwrap();
-    let inode_table_size = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap()); // to_le_bytes()).unwrap();
-    let free_inodes_count = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap()); // to_le_bytes()).unwrap();
-    let free_blocks_count = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap()); // to_le_bytes()).unwrap();
-    let inodes_count = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap()); // to_le_bytes()).unwrap();
-    let blocks_count = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap()); // to_le_bytes()).unwrap();
-    let block_size = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap()); // to_le_bytes()).unwrap();;
+    let filesystem_size = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
+    let inode_table_size = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
+    let inode_table_percentage = f32::from_le_bytes(superblock_bytes.drain(0..size_of::<f32>()).as_slice().try_into().unwrap());
+    let free_inodes_count = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
+    let free_blocks_count = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
+    let inodes_count = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
+    let blocks_count = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
+    let block_size = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
+    let block_data_size = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
 
     let mut free_inode_addresses = Vec::new();
     for _ in 0..16 {
@@ -394,13 +407,15 @@ impl E5FSFilesystem {
       filesystem_type,
       filesystem_size,
       inode_table_size,
+      inode_table_percentage,
       free_inodes_count,
       free_blocks_count,
       inodes_count,
       blocks_count,
       block_size,
-      free_inode_addresses: free_inode_addresses.try_into().unwrap(),
-      free_block_addresses: free_block_addresses.try_into().unwrap(),
+      block_data_size,
+      free_inode_numbers: free_inode_addresses.try_into().unwrap(),
+      free_block_numbers: free_block_addresses.try_into().unwrap(),
     }
   }
 
@@ -488,11 +503,13 @@ mod tests {
 
     let superblock_size = e5fs_builder.superblock_size;
     let filesystem_size = e5fs_builder.filesystem_size;
+    let inode_table_size = e5fs_builder.inode_table_size;
+    let inode_table_percentage = e5fs_builder.inode_table_percentage;
     let inode_size = e5fs_builder.inode_size;
     let block_size = e5fs_builder.block_size;
+    let block_data_size = e5fs_builder.block_data_size;
     let inodes_count = e5fs_builder.inodes_count;
     let blocks_count = e5fs_builder.blocks_count;
-    let inode_table_size = e5fs_builder.inode_table_size;
 
     let mut free_inodes = [0; 16];
     for i in 0..16 {
@@ -510,13 +527,15 @@ mod tests {
       ],
       filesystem_size, // in blocks
       inode_table_size,
+      inode_table_percentage,
       free_inodes_count: inodes_count,
       free_blocks_count: blocks_count,
       inodes_count,
       blocks_count,
       block_size,
-      free_inode_addresses: free_inodes,
-      free_block_addresses: free_blocks,
+      block_data_size,
+      free_inode_numbers: free_inodes,
+      free_block_numbers: free_blocks,
     };
 
     E5FSFilesystem::write_superblock(&mut e5fs_builder, &superblock).unwrap();
@@ -560,7 +579,7 @@ mod tests {
           .as_secs()
           .try_into()
           .unwrap(),
-        block_addresses: [i % 5; 16],
+        block_numbers: [i % 5; 16],
       });
 
       vec
