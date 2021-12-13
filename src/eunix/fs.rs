@@ -4,6 +4,7 @@ use core::fmt::Debug;
 use super::kernel::Errno;
 
 pub type AddressSize = u32;
+pub type Id = u16;
 
 /// _По тонкому льду ((нет))_
 ///  
@@ -13,7 +14,44 @@ pub type AddressSize = u32;
 #[allow(dead_code)]
 pub const NO_ADDRESS: AddressSize = AddressSize::MAX;
 
-pub type FileMode = u16;
+#[allow(dead_code)]
+pub const NOBODY: Id = Id::MAX;
+
+#[allow(dead_code)]
+pub const NOLINKS: u32 = u32::MAX;
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct FileMode(pub u16);
+
+impl Default for FileMode {
+  fn default() -> Self {
+      Self(0b0000000_110_000_000)
+  }
+}
+
+// impl std::ops::Add for FileMode {
+//   fn add(self, rhs: Self) -> Self::Output {
+//       Self(self.0 + rhs)
+//   }
+// }
+
+impl FileMode {
+  pub fn new(raw: u16) -> Self {
+    Self(raw)
+  }
+  pub fn zero() -> Self {
+    Self(0b0000000_000_000_000)
+  }
+}
+
+impl std::ops::Add for FileMode {
+  type Output = Self;
+
+  fn add(self, rhs: Self) -> Self::Output {
+    Self(self.0 + rhs.0)
+  }
+}
+
 pub type FileDescriptor = AddressSize;
 
 #[derive(Debug)]

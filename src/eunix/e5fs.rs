@@ -1,9 +1,15 @@
 use std::io::prelude::*;
 use std::io::SeekFrom;
 use std::io::Write;
+use std::slice::SliceIndex;
+
+use crate::eunix::fs::NOBODY;
+use crate::util::unixtime;
 
 use super::fs::AddressSize;
 use super::fs::FileMode;
+use super::fs::Id;
+use super::fs::NOLINKS;
 use super::fs::NO_ADDRESS;
 use super::kernel::Errno;
 
@@ -24,12 +30,12 @@ pub type Directory<'a> = Vec<DirectoryEntry<'a>>;
 
 // 2 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + (4 * 16)
 // 2 + 8 + 4 + 4 + 8 + 4 + 4 + 4 + (8 * 16)
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct INode {
   mode: FileMode,
   links_count: AddressSize,
-  uid: u32,
-  gid: u32,
+  uid: Id,
+  gid: Id,
   file_size: AddressSize,
   atime: u32,
   mtime: u32,
@@ -37,9 +43,25 @@ pub struct INode {
   block_numbers: [AddressSize; 16],
 }
 
+impl Default for INode {
+  fn default() -> Self {
+    Self {
+      mode: FileMode::default(),
+      links_count: NOLINKS,
+      file_size: 0,
+      uid: NOBODY,
+      gid: NOBODY,
+      atime: 0,
+      mtime: 0,
+      ctime: 0,
+      block_numbers: [NO_ADDRESS; 16]
+    }
+  }
+}
+
 // 16 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + (4 * 16) + (4 * 16)
 // 16 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + (8 * 16) + (8 * 16)
-#[derive(Default, Debug, PartialEq)]
+#[derive(Default, Debug, PartialEq, Clone, Copy)]
 pub struct Superblock {
   filesystem_type: [u8; 16],
   filesystem_size: AddressSize, // in blocks
@@ -250,9 +272,107 @@ impl E5FSFilesystem {
     Ok(())
   }
 
+  /// Replace specified inode in `free_inode_numbers` with `NO_ADDRESS`
+  fn claim_free_inode(&mut self) -> Result<AddressSize, Errno> {
+    let maybe_free_inode_number = self.superblock.free_inode_numbers
+      .iter()
+      .find(|&&inode_number| inode_number != NO_ADDRESS);
 
+    // Guard for no free inodes
+    let free_inode_number: AddressSize = match maybe_free_inode_number {
+      Some(free_inode) => *free_inode,
+      None => return Err(Errno::ENOENT),
+    };
+
+    let inode_number = self.superblock.free_inode_numbers
+      .iter_mut()
+      .find(
+        |&&mut inode_number| inode_number == free_inode_number
+      )
+      .expect("specified inode is not present in superblock.free_inode_numbers");
+
+    *inode_number = NO_ADDRESS;
+    self
+      .write_superblock(&self.superblock.clone())
+      .expect("cannot write superblock in use_inode");
+    
+    Ok(free_inode_number)
+  }
+
+  /// Replace specified inode in `free_inode_numbers` with `NO_ADDRESS`
+  fn claim_free_block(&mut self) -> Result<AddressSize, Errno> {
+    // 1. Basically try to find first chunk with free block number != NO_ADDRESS
+    let maybe_free_block_numbers = (self.fs_info.first_flb_block_number..self.fs_info.blocks_count)
+      .map(|fbl_block_number| {
+        E5FSFilesystem::read_block_numbers_from_block(&self.read_block(fbl_block_number))
+      })
+      .find_map(|free_block_numbers| {
+        let maybe_free_block_number = free_block_numbers
+          .iter()
+          .zip(0..)
+          .find_map(|(&block_number, index)| { 
+            match block_number != NO_ADDRESS {
+              true => Some((block_number, index)),
+              false => None
+            }
+          });
+
+        match maybe_free_block_number {
+          Some(x) => Some((free_block_numbers, x)),
+          None => None
+        }
+      });
+
+    // 2. Then see if we actually have at least one such chunk
+    let free_block_numbers = match maybe_free_block_numbers {
+      None => return Err(Errno::ENOENT),
+      Some(free_block_numbers) => free_block_numbers,
+    };
+    
+    let (mut free_block_numbers, (fbl_block_number, free_block_number_index)) = free_block_numbers;
+
+    let free_block_number = free_block_numbers.get(free_block_number_index).unwrap().to_owned();
+
+    // Then write `NO_ADDRESS` in place of `free_block_number` that we've found
+    *free_block_numbers.get_mut(free_block_number_index).unwrap() = NO_ADDRESS;
+
+    let block = self.read_block(fbl_block_number);
+
+    self.write_block(&Block {
+      next_block_address: block.next_block_address,
+      data: free_block_numbers.iter().flat_map(|x| x.to_le_bytes()).collect(),
+    }, fbl_block_number).unwrap();
+
+    // And return number of that block
+    Ok(free_block_number)
+  }
+
+  /// Returns:
+  /// ENOENT -> if no free block or inode exists
   fn allocate_file(&mut self) -> Result<INode, Errno> {
-    todo!();
+    let free_inode_number = self.claim_free_inode()?;
+
+    let mut inode = INode {
+      links_count: NOLINKS,
+      file_size: 0,
+      uid: NOBODY,
+      gid: NOBODY,
+      atime: unixtime(),
+      mtime: unixtime(),
+      ctime: unixtime(),
+      ..Default::default()
+    };
+
+    let free_block_number = self.claim_free_block()?;
+    inode.block_numbers[0] = free_block_number;
+
+    self.write_inode(&inode, free_inode_number)?;
+    self.write_block(&Block {
+      data: vec![0; self.fs_info.block_data_size as usize],
+      ..Default::default()
+    }, free_inode_number)?;
+
+    Ok(inode)
   }
 
   // Errors:
@@ -286,7 +406,7 @@ impl E5FSFilesystem {
     
     // Read bytes from file
     let mut inode_bytes = Vec::new();
-    inode_bytes.write(&inode.mode.to_le_bytes()).unwrap();
+    inode_bytes.write(&inode.mode.0.to_le_bytes()).unwrap();
     inode_bytes.write(&inode.links_count.to_le_bytes()).unwrap();
     inode_bytes.write(&inode.uid.to_le_bytes()).unwrap();
     inode_bytes.write(&inode.gid.to_le_bytes()).unwrap();
@@ -362,10 +482,10 @@ impl E5FSFilesystem {
     self.fs_info.realfile.seek(SeekFrom::Start(address.try_into().unwrap())).unwrap();
     self.fs_info.realfile.read_exact(&mut inode_bytes).unwrap();
 
-    let mode = u16::from_le_bytes(inode_bytes.drain(0..size_of::<u16>()).as_slice().try_into().unwrap()); 
+    let mode = FileMode(u16::from_le_bytes(inode_bytes.drain(0..size_of::<u16>()).as_slice().try_into().unwrap())); 
     let links_count = AddressSize::from_le_bytes(inode_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap()); 
-    let uid = u32::from_le_bytes(inode_bytes.drain(0..size_of::<u32>()).as_slice().try_into().unwrap()); 
-    let gid = u32::from_le_bytes(inode_bytes.drain(0..size_of::<u32>()).as_slice().try_into().unwrap());
+    let uid = Id::from_le_bytes(inode_bytes.drain(0..size_of::<Id>()).as_slice().try_into().unwrap()); 
+    let gid = Id::from_le_bytes(inode_bytes.drain(0..size_of::<Id>()).as_slice().try_into().unwrap());
     let file_size = AddressSize::from_le_bytes(inode_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
     let atime = u32::from_le_bytes(inode_bytes.drain(0..size_of::<u32>()).as_slice().try_into().unwrap());
     let mtime = u32::from_le_bytes(inode_bytes.drain(0..size_of::<u32>()).as_slice().try_into().unwrap());
@@ -507,7 +627,7 @@ impl E5FSFilesystem {
 
 #[cfg(test)]
 mod tests {
-  use crate::util::{mktemp, mkenxvd};
+  use crate::{util::{mktemp, mkenxvd}, eunix::fs::NOBODY};
   use super::*;
 
   #[test]
@@ -537,10 +657,10 @@ mod tests {
     let inode_indices = 0..e5fs.fs_info.blocks_count;
     let inodes = inode_indices.clone().fold(Vec::new(), |mut vec, i| {
       vec.push(INode {
-        mode: 0b0000000_000_000_000 + 1,
+        mode: FileMode::zero() + FileMode::new(1),
         links_count: i,
-        uid: i,
-        gid: i + 1,
+        uid: (i as Id % NOBODY),
+        gid: (i as Id % NOBODY) + 1,
         file_size: i * 1024,
         atime: crate::util::unixtime(),
         mtime: crate::util::unixtime(),
