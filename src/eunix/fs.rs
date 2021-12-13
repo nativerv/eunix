@@ -11,7 +11,7 @@ pub type AddressSize = u32;
 /// Can be invalid in theory if we use exactly 2047 gigs of blocks,
 /// after which the whole fs will not work anymore so who caresi guessb.
 #[allow(dead_code)]
-pub const NO_BLOCK: AddressSize = AddressSize::MAX;
+pub const NO_ADDRESS: AddressSize = AddressSize::MAX;
 
 pub type FileMode = u16;
 pub type FileDescriptor = AddressSize;

@@ -4,7 +4,7 @@ use std::io::Write;
 
 use super::fs::AddressSize;
 use super::fs::FileMode;
-use super::fs::NO_BLOCK;
+use super::fs::NO_ADDRESS;
 use super::kernel::Errno;
 
 /* 
@@ -52,7 +52,47 @@ pub struct Superblock {
   block_size: AddressSize,
   block_data_size: AddressSize,
   free_inode_numbers: [AddressSize; 16],
-  free_block_numbers: [AddressSize; 16],
+  first_fbl_block_number: AddressSize,
+}
+
+impl Superblock {
+  fn new(e5fs_builder: &mut E5FSFilesystemBuilder) -> Self {
+    let _superblock_size = e5fs_builder.superblock_size;
+    let filesystem_size = e5fs_builder.filesystem_size;
+    let inode_table_size = e5fs_builder.inode_table_size;
+    let inode_table_percentage = e5fs_builder.inode_table_percentage;
+    let _inode_size = e5fs_builder.inode_size;
+    let block_size = e5fs_builder.block_size;
+    let block_data_size = e5fs_builder.block_data_size;
+    let inodes_count = e5fs_builder.inodes_count;
+    let blocks_count = e5fs_builder.blocks_count;
+
+    let mut free_inodes = [0; 16];
+    for i in 0..16 {
+      free_inodes[i as usize] = if i < inodes_count {
+        i
+      } else {
+        NO_ADDRESS
+      }
+    }
+
+    Self {
+      filesystem_type: [
+        'e' as u8, '5' as u8, 'f' as u8, 's' as u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      ],
+      filesystem_size, // in blocks
+      inode_table_size,
+      inode_table_percentage,
+      free_inodes_count: inodes_count,
+      free_blocks_count: blocks_count,
+      inodes_count,
+      blocks_count,
+      block_size,
+      block_data_size,
+      free_inode_numbers: free_inodes,
+      first_fbl_block_number: e5fs_builder.free_blocks_count,
+    }
+  }
 }
 
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -82,6 +122,7 @@ pub struct E5FSFilesystemBuilder {
   address_size: AddressSize,
   addresses_per_fbl_chunk: AddressSize,
   inode_table_percentage: f32,
+  first_flb_block_number: AddressSize,
 }
 
 impl E5FSFilesystemBuilder {
@@ -143,7 +184,8 @@ impl E5FSFilesystemBuilder {
     }
 
     let block_table_size = block_size * blocks_count;
-  
+
+    let first_flb_block_number = free_blocks_count;
 
     Ok(Self {
       realfile,
@@ -171,6 +213,7 @@ impl E5FSFilesystemBuilder {
       address_size,
       addresses_per_fbl_chunk,
       inode_table_percentage,
+      first_flb_block_number,
     })
   }
 }
@@ -182,62 +225,20 @@ pub struct E5FSFilesystem {
 
 impl E5FSFilesystem {
   pub fn mkfs(e5fs_builder: &mut E5FSFilesystemBuilder) -> Result<(), Errno> {
-    let _realfile = &e5fs_builder.realfile;
-    let _device_size = e5fs_builder.device_size;
-    let superblock_size = e5fs_builder.superblock_size;
-    let inode_size = e5fs_builder.inode_size;
-
-    let block_size = e5fs_builder.block_size;
-
-    let inodes_count = e5fs_builder.inodes_count;
-    let blocks_count = e5fs_builder.blocks_count;
-
-    let inode_table_size = e5fs_builder.inode_table_size;
-    let _block_table_size = e5fs_builder.block_table_size;
-
-    let filesystem_size = e5fs_builder.filesystem_size;
-    let blocks_needed_for_fbl = e5fs_builder.blocks_needed_for_fbl;
-    let _first_inode_address = e5fs_builder.first_inode_address;
-    let _first_block_address = e5fs_builder.first_block_address;
-    let free_blocks_count = e5fs_builder.free_blocks_count;
-
-    let inode_table_percentage = e5fs_builder.inode_table_percentage;
-    let block_data_size = e5fs_builder.block_data_size;
-
-    let mut free_inodes = [0; 16];
-    for i in 0..16 {
-      free_inodes[i as usize] = superblock_size + (inode_size * i);
-    }
-
-    let mut free_blocks = [0; 16];
-    for i in 0..16 {
-      free_blocks[i as usize] = superblock_size + inode_table_size + block_size * i;
-    }
-
-    let superblock = Superblock {
-      filesystem_type: [
-        'e' as u8, '5' as u8, 'f' as u8, 's' as u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      ],
-      filesystem_size, // in blocks
-      inode_table_size,
-      inode_table_percentage,
-      free_inodes_count: inodes_count,
-      free_blocks_count: blocks_count,
-      inodes_count,
-      blocks_count,
-      block_size,
-      block_data_size,
-      free_inode_numbers: free_inodes,
-      free_block_numbers: free_blocks,
-    };
+    let superblock = Superblock::new(e5fs_builder);
 
     // Write Superblock
     E5FSFilesystem::write_superblock(e5fs_builder, &superblock).unwrap();
 
-    // Write fbl
+    // Write fbl (free_block_list)
     E5FSFilesystem::write_fbl(e5fs_builder);
 
     Ok(())
+  }
+
+
+  fn allocate_file(e5fs_builder: &mut E5FSFilesystemBuilder) -> Result<INode, Errno> {
+    todo!();
   }
 
   // Errors:
@@ -305,7 +306,7 @@ impl E5FSFilesystem {
     superblock_bytes.write(&superblock.block_size.to_le_bytes()).unwrap();
     superblock_bytes.write(&superblock.block_data_size.to_le_bytes()).unwrap();
     superblock_bytes.write(&superblock.free_inode_numbers.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>()).unwrap();
-    superblock_bytes.write(&superblock.free_block_numbers.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>()).unwrap();
+    superblock_bytes.write(&superblock.first_fbl_block_number.to_le_bytes()).unwrap();
 
     // Seek to 0 and write bytes
     e5fs_builder.realfile.seek(SeekFrom::Start(0)).unwrap();
@@ -393,15 +394,12 @@ impl E5FSFilesystem {
     let block_size = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
     let block_data_size = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
 
-    let mut free_inode_addresses = Vec::new();
+    let mut free_inode_numbers = Vec::new();
     for _ in 0..16 {
-      free_inode_addresses.push(AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap()));
+      free_inode_numbers.push(AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap()));
     }
 
-    let mut free_block_addresses = Vec::new();
-    for _ in 0..16 {
-      free_block_addresses.push(AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap()));
-    }
+    let first_fbl_block_number = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
 
     Superblock {
       filesystem_type,
@@ -414,8 +412,8 @@ impl E5FSFilesystem {
       blocks_count,
       block_size,
       block_data_size,
-      free_inode_numbers: free_inode_addresses.try_into().unwrap(),
-      free_block_numbers: free_block_addresses.try_into().unwrap(),
+      free_inode_numbers: free_inode_numbers.try_into().unwrap(),
+      first_fbl_block_number,
     }
   }
 
@@ -431,7 +429,7 @@ impl E5FSFilesystem {
   }
 
   fn generate_fbl(e5fs_builder: &mut E5FSFilesystemBuilder) -> Vec<Vec<AddressSize>> {
-    // Basically what we do in the next ~23 lines:
+    // Basically what we do in the next ~30 lines:
     // 1. Generate addresses of free blocks
     // 2. Divide it to chunks of however many fits to one block
     // 3. If addresses doesnt divide into chunks evenly,
@@ -439,11 +437,11 @@ impl E5FSFilesystem {
     // 4. If above is the case and remainder was created,
     //    fill it to be the size of full chunks
     //    with NO_BLOCK addresses
-    let free_blocks_addresses = 
-      (0..e5fs_builder.free_blocks_count).collect::<Vec<AddressSize>>();
+    let free_blocks_numbers = 
+      (0..e5fs_builder.first_flb_block_number).collect::<Vec<AddressSize>>();
 
     let fbl_chunks_iterator = 
-      free_blocks_addresses
+      free_blocks_numbers
         .chunks_exact(e5fs_builder.addresses_per_fbl_chunk as usize);
 
     let mut fbl_chunks = 
@@ -460,7 +458,7 @@ impl E5FSFilesystem {
 
     if lacking_addresses_count > 0 {
       remainder
-        .append(&mut vec![NO_BLOCK; lacking_addresses_count as usize]);
+        .append(&mut vec![NO_ADDRESS; lacking_addresses_count as usize]);
     }
 
     fbl_chunks.push(remainder);
@@ -478,10 +476,14 @@ impl E5FSFilesystem {
     fbl_chunks
       .iter()
     // Zip chunks with fbl block numbers
-      .zip(e5fs_builder.free_blocks_count..e5fs_builder.blocks_count)
+      .zip(e5fs_builder.first_flb_block_number..e5fs_builder.blocks_count)
       .for_each(|(chunk, block_number)| {
         let block = Block {
-          next_block_address: NO_BLOCK,
+          next_block_address: if block_number != e5fs_builder.blocks_count - 1 {
+            block_number + 1
+          } else {
+            NO_ADDRESS
+          },
           data: chunk.iter().flat_map(|x| x.to_le_bytes()).collect(),
         };
         E5FSFilesystem::write_block(e5fs_builder, &block, block_number).unwrap();
@@ -501,42 +503,7 @@ mod tests {
 
     let mut e5fs_builder = E5FSFilesystemBuilder::new(tempfile.as_str(), 0.05, 4096).unwrap();
 
-    let superblock_size = e5fs_builder.superblock_size;
-    let filesystem_size = e5fs_builder.filesystem_size;
-    let inode_table_size = e5fs_builder.inode_table_size;
-    let inode_table_percentage = e5fs_builder.inode_table_percentage;
-    let inode_size = e5fs_builder.inode_size;
-    let block_size = e5fs_builder.block_size;
-    let block_data_size = e5fs_builder.block_data_size;
-    let inodes_count = e5fs_builder.inodes_count;
-    let blocks_count = e5fs_builder.blocks_count;
-
-    let mut free_inodes = [0; 16];
-    for i in 0..16 {
-      free_inodes[i as usize] = superblock_size + (inode_size * i);
-    }
-
-    let mut free_blocks = [0; 16];
-    for i in 0..16 {
-      free_blocks[i as usize] = superblock_size + inode_table_size + block_size * i;
-    }
-
-    let superblock = Superblock {
-      filesystem_type: [
-        'e' as u8, '5' as u8, 'f' as u8, 's' as u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      ],
-      filesystem_size, // in blocks
-      inode_table_size,
-      inode_table_percentage,
-      free_inodes_count: inodes_count,
-      free_blocks_count: blocks_count,
-      inodes_count,
-      blocks_count,
-      block_size,
-      block_data_size,
-      free_inode_numbers: free_inodes,
-      free_block_numbers: free_blocks,
-    };
+    let superblock = Superblock::new(&mut e5fs_builder);
 
     E5FSFilesystem::write_superblock(&mut e5fs_builder, &superblock).unwrap();
 
@@ -561,24 +528,9 @@ mod tests {
         uid: i,
         gid: i + 1,
         file_size: i * 1024,
-        atime: std::time::SystemTime::now()
-          .duration_since(std::time::SystemTime::UNIX_EPOCH)
-          .unwrap()
-          .as_secs()
-          .try_into()
-          .unwrap(),
-        mtime: std::time::SystemTime::now()
-          .duration_since(std::time::SystemTime::UNIX_EPOCH)
-          .unwrap()
-          .as_secs()
-          .try_into()
-          .unwrap(),
-        ctime: std::time::SystemTime::now()
-          .duration_since(std::time::SystemTime::UNIX_EPOCH)
-          .unwrap()
-          .as_secs()
-          .try_into()
-          .unwrap(),
+        atime: crate::util::unixtime(),
+        mtime: crate::util::unixtime(),
+        ctime: crate::util::unixtime(),
         block_numbers: [i % 5; 16],
       });
 
@@ -647,7 +599,7 @@ mod tests {
 
     let fbl_chunks = E5FSFilesystem::generate_fbl(&mut e5fs_builder);
 
-    let fbl_chunks_from_file = (e5fs_builder.free_blocks_count..e5fs_builder.blocks_count)
+    let fbl_chunks_from_file = (e5fs_builder.first_flb_block_number..e5fs_builder.blocks_count)
       .map(|block_number| {
         let block = E5FSFilesystem::read_block(&mut e5fs_builder, block_number);
         let block_numbers_from_block = E5FSFilesystem::read_block_numbers_from_block(&block);
@@ -674,7 +626,7 @@ mod tests {
     let block_numbers: Vec<AddressSize> = (0..block_numbers_per_free_blocks_chunk).collect();
 
     let block = Block {
-      next_block_address: NO_BLOCK,
+      next_block_address: NO_ADDRESS,
       data: block_numbers.iter().flat_map(|x| x.to_le_bytes()).collect(),
     };
 
