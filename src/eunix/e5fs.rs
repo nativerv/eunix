@@ -14,9 +14,10 @@ use super::kernel::Errno;
 
 /* 
  * LEGEND: 
- * fbl - free blocks list, the reserved blocks at the
- *       end of the blocks list which contain free
- *       block numbers for quick allocation
+ * fbl       - free blocks list, the reserved blocks at the
+ *             end of the blocks list which contain free
+ *             block numbers for quick allocation
+ * fbl_chunk - vector of numbers parsed from fbl block
  * */
 
 pub struct DirectoryEntry<'a> {
@@ -41,7 +42,8 @@ pub struct INode {
   atime: u32,
   mtime: u32,
   ctime: u32,
-  block_numbers: [AddressSize; 16],
+  direct_block_numbers: [AddressSize; 12],
+  indirect_block_numbers: [AddressSize; 3],
 }
 
 impl Default for INode {
@@ -55,7 +57,8 @@ impl Default for INode {
       atime: 0,
       mtime: 0,
       ctime: 0,
-      block_numbers: [NO_ADDRESS; 16]
+      direct_block_numbers: [NO_ADDRESS; 12],
+      indirect_block_numbers: [NO_ADDRESS; 3]
     }
   }
 }
@@ -341,20 +344,20 @@ impl E5FSFilesystem {
       Some(free_block_numbers) => free_block_numbers,
     };
     
-    let (mut free_block_numbers, (fbl_block_number, free_block_number_index)) = free_block_numbers;
+    let (mut fbl_chunk, (fbl_block_number, free_block_number_index)) = free_block_numbers;
 
-    let free_block_number = free_block_numbers.get(free_block_number_index).unwrap().to_owned();
+    // 3. Save copy of `free_block_number` that we've found
+    let free_block_number = fbl_chunk.get(free_block_number_index).unwrap().to_owned();
 
-    // 3. Then write `NO_ADDRESS` in place of `free_block_number` that we've found
-    *free_block_numbers.get_mut(free_block_number_index).unwrap() = NO_ADDRESS;
+    // 4. Then write `NO_ADDRESS` in place of the original
+    *fbl_chunk.get_mut(free_block_number_index).unwrap() = NO_ADDRESS;
 
-    // let block = self.read_block(fbl_block_number);
-
+    // 5. Write mutated fbl_chunk
     self.write_block(&Block {
-      data: free_block_numbers.iter().flat_map(|x| x.to_le_bytes()).collect(),
+      data: fbl_chunk.iter().flat_map(|x| x.to_le_bytes()).collect(),
     }, fbl_block_number).unwrap();
 
-    // 4. And return number of that block
+    // 5. And return it
     Ok(free_block_number)
   }
 
@@ -376,7 +379,7 @@ impl E5FSFilesystem {
     };
 
     let free_block_number = self.claim_free_block()?;
-    inode.block_numbers[0] = free_block_number;
+    inode.direct_block_numbers[0] = free_block_number;
 
     self.write_inode(&inode, free_inode_number)?;
     self.write_block(&Block {
@@ -426,7 +429,8 @@ impl E5FSFilesystem {
     inode_bytes.write(&inode.atime.to_le_bytes()).unwrap();
     inode_bytes.write(&inode.mtime.to_le_bytes()).unwrap();
     inode_bytes.write(&inode.ctime.to_le_bytes()).unwrap();
-    inode_bytes.write(&inode.block_numbers.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>()).unwrap();
+    inode_bytes.write(&inode.direct_block_numbers.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>()).unwrap();
+    inode_bytes.write(&inode.indirect_block_numbers.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>()).unwrap();
 
     // Get absolute address of inode
     let address = self.fs_info.first_inode_address + inode_number * self.fs_info.inode_size;
@@ -473,6 +477,7 @@ impl E5FSFilesystem {
     self.fs_info.realfile.seek(SeekFrom::Start(address.try_into().unwrap()).try_into().unwrap()).unwrap();
     self.fs_info.realfile.read_exact(&mut block_bytes).unwrap();
 
+    // Return bytes as is, as it is raw data of a file
     Block {
       data: block_bytes,
     }
@@ -491,6 +496,7 @@ impl E5FSFilesystem {
     self.fs_info.realfile.seek(SeekFrom::Start(address.try_into().unwrap())).unwrap();
     self.fs_info.realfile.read_exact(&mut inode_bytes).unwrap();
 
+    // Then parse bytes, draining from vector mutably
     let mode = FileMode(u16::from_le_bytes(inode_bytes.drain(0..size_of::<u16>()).as_slice().try_into().unwrap())); 
     let links_count = AddressSize::from_le_bytes(inode_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap()); 
     let uid = Id::from_le_bytes(inode_bytes.drain(0..size_of::<Id>()).as_slice().try_into().unwrap()); 
@@ -499,12 +505,16 @@ impl E5FSFilesystem {
     let atime = u32::from_le_bytes(inode_bytes.drain(0..size_of::<u32>()).as_slice().try_into().unwrap());
     let mtime = u32::from_le_bytes(inode_bytes.drain(0..size_of::<u32>()).as_slice().try_into().unwrap());
     let ctime = u32::from_le_bytes(inode_bytes.drain(0..size_of::<u32>()).as_slice().try_into().unwrap());
-
-    let mut block_addresses = Vec::new();
-    for _ in 0..16 {
+    let direct_block_addresses = (0..12).fold(Vec::new(), |mut block_addresses, _| {
       block_addresses.push(AddressSize::from_le_bytes(inode_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap()));
-    }
+      block_addresses
+    });
+    let indirect_block_addresses = (0..3).fold(Vec::new(), |mut block_addresses, _| {
+      block_addresses.push(AddressSize::from_le_bytes(inode_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap()));
+      block_addresses
+    });
 
+    // Return parsed
     INode {
       mode,
       links_count,
@@ -514,7 +524,8 @@ impl E5FSFilesystem {
       atime,
       mtime,
       ctime,
-      block_numbers: block_addresses.try_into().unwrap(),
+      direct_block_numbers: direct_block_addresses.try_into().unwrap(),
+      indirect_block_numbers: indirect_block_addresses.try_into().unwrap(),
     }
   }
 
@@ -527,6 +538,7 @@ impl E5FSFilesystem {
     self.fs_info.realfile.seek(SeekFrom::Start(0)).unwrap();
     self.fs_info.realfile.read_exact(&mut superblock_bytes).unwrap();
 
+    // Then parse bytes, draining from vector mutably
     let filesystem_type: [u8; 16] = superblock_bytes.drain(0..16).as_slice().try_into().unwrap(); 
     let filesystem_size = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
     let inode_table_size = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
@@ -537,12 +549,10 @@ impl E5FSFilesystem {
     let blocks_count = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
     let block_size = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
     let block_data_size = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
-
-    let mut free_inode_numbers = Vec::new();
-    for _ in 0..16 {
+    let free_inode_numbers = (0..16).fold(Vec::new(), |mut free_inode_numbers, _| {
       free_inode_numbers.push(AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap()));
-    }
-
+      free_inode_numbers 
+    });
     let first_fbl_block_number = AddressSize::from_le_bytes(superblock_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
 
     Superblock {
@@ -684,7 +694,8 @@ mod tests {
         atime: crate::util::unixtime(),
         mtime: crate::util::unixtime(),
         ctime: crate::util::unixtime(),
-        block_numbers: [i % 5; 16],
+        direct_block_numbers: [i % 5; 12],
+        indirect_block_numbers: [i % 6; 3],
       });
 
       vec
