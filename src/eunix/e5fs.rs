@@ -120,7 +120,6 @@ impl Superblock {
 
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct Block {
-  next_block_address: AddressSize,
   data: Vec<u8>,
 }
 
@@ -177,9 +176,7 @@ impl E5FSFilesystemBuilder {
     let address_size = std::mem::size_of::<AddressSize>() as AddressSize;
 
     // next_block_number + data
-    let block_size = std::mem::size_of::<AddressSize>() as AddressSize
-      + block_data_size;
-    
+    let block_size = block_data_size;
 
     let inodes_count = ((device_size as f32 * inode_table_percentage) / inode_size as f32) as AddressSize;
     let blocks_count =
@@ -192,7 +189,9 @@ impl E5FSFilesystemBuilder {
     let first_inode_address = superblock_size;
     let first_block_address = superblock_size + inode_table_size;
 
-    // blocks_count / (block_data_size / block_address_size)
+    // ceil(
+    //   blocks_count / (block_data_size / block_address_size)
+    // )
     let blocks_needed_for_fbl = (blocks_count as f64
       / (block_data_size as f64 / std::mem::size_of::<AddressSize>() as f64)).ceil() as AddressSize;
 
@@ -202,7 +201,7 @@ impl E5FSFilesystemBuilder {
 
     // Guard for not enough blocks even for free blocks list
     match blocks_needed_for_fbl {
-    n if n >= blocks_count => return Err("disk size is too small: blocks_needed_for_fbl > blocks_count"),
+      n if n >= blocks_count => return Err("disk size is too small: blocks_needed_for_fbl > blocks_count"),
       _ => (),
     }
 
@@ -349,10 +348,9 @@ impl E5FSFilesystem {
     // 3. Then write `NO_ADDRESS` in place of `free_block_number` that we've found
     *free_block_numbers.get_mut(free_block_number_index).unwrap() = NO_ADDRESS;
 
-    let block = self.read_block(fbl_block_number);
+    // let block = self.read_block(fbl_block_number);
 
     self.write_block(&Block {
-      next_block_address: block.next_block_address,
       data: free_block_numbers.iter().flat_map(|x| x.to_le_bytes()).collect(),
     }, fbl_block_number).unwrap();
 
@@ -399,7 +397,6 @@ impl E5FSFilesystem {
 
     // Read bytes from file
     let mut block_bytes = Vec::new();
-    block_bytes.write(&block.next_block_address.to_le_bytes()).unwrap();
     block_bytes.write(&block.data).unwrap();
 
     // Get absolute address of block
@@ -467,8 +464,6 @@ impl E5FSFilesystem {
 
   #[allow(dead_code)]
   fn read_block(&mut self, block_number: AddressSize) -> Block {
-    use std::mem::size_of;
-
     let mut block_bytes = vec![0u8; self.fs_info.block_size.try_into().unwrap()];
 
     // Get absolute address of block
@@ -478,12 +473,8 @@ impl E5FSFilesystem {
     self.fs_info.realfile.seek(SeekFrom::Start(address.try_into().unwrap()).try_into().unwrap()).unwrap();
     self.fs_info.realfile.read_exact(&mut block_bytes).unwrap();
 
-    let next_block_address = AddressSize::from_le_bytes(block_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
-    let data = block_bytes;
-
     Block {
-      next_block_address,
-      data,
+      data: block_bytes,
     }
   }
 
@@ -646,11 +637,6 @@ impl E5FSFilesystem {
       .zip(self.fs_info.first_flb_block_number..self.fs_info.blocks_count)
       .for_each(|(chunk, block_number)| {
         let block = Block {
-          next_block_address: if block_number != self.fs_info.blocks_count - 1 {
-            block_number + 1
-          } else {
-            NO_ADDRESS
-          },
           data: chunk.iter().flat_map(|x| x.to_le_bytes()).collect(),
         };
         self.write_block(&block, block_number).unwrap();
@@ -731,7 +717,6 @@ mod tests {
     let block_indices = 0..e5fs.fs_info.blocks_count;
     let blocks = block_indices.clone().fold(Vec::new(), |mut vec, i| {
       vec.push(Block {
-        next_block_address: i,
         data: vec![(i % 255) as u8; e5fs.fs_info.block_data_size as usize],
       });
 
@@ -775,9 +760,6 @@ mod tests {
       })
       .collect::<Vec<Vec<AddressSize>>>();
 
-    println!("free_blocks_count: {}", e5fs.fs_info.free_blocks_count);
-    println!("blocks_count: {}", e5fs.fs_info.blocks_count);
-    println!("blocks_needed_for_fbl: {}", e5fs.fs_info.blocks_needed_for_fbl);
     assert_eq!(fbl_chunks_from_file, fbl_chunks);
   }
 
@@ -793,7 +775,6 @@ mod tests {
     let block_numbers: Vec<AddressSize> = (0..block_numbers_per_free_blocks_chunk).collect();
 
     let block = Block {
-      next_block_address: NO_ADDRESS,
       data: block_numbers.iter().flat_map(|x| x.to_le_bytes()).collect(),
     };
 
