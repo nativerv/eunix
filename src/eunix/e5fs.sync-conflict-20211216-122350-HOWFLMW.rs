@@ -293,17 +293,17 @@ impl E5FSFilesystem {
       .find(|&&inode_number| inode_number != NO_ADDRESS)
       .ok_or_else(|| Errno::ENOENT)?;
 
-    // Find 
     let free_inode_idx_in_sb = self.superblock.free_inode_numbers
       .iter()
       .zip(0..)
-      .find_map(|(&inode_number, index)| {
-        if inode_number == free_inode_number {
+      .find_map(
+        |(&inode_number, index)| if inode_number == free_inode_number {
           Some(index)
         } else {
           None
         }
-      }).expect("specified inode is not present in superblock.free_inode_numbers");
+      )
+      .expect("specified inode is not present in superblock.free_inode_numbers");
 
     // Replace inode number in superblock with NO_ADDRESS
     self.superblock.free_inode_numbers[free_inode_idx_in_sb as usize] = NO_ADDRESS;
@@ -334,7 +334,7 @@ impl E5FSFilesystem {
 
     // Write changed inode to disk
     self
-      .write_inode(&inode, inode_number)
+      .write_inode(&inode, free_inode_number)
       .expect("cannot write released inode");
     
     Ok(())
@@ -389,7 +389,6 @@ impl E5FSFilesystem {
   }
 
   /// Replace specified inode in `free_inode_numbers` with `NO_ADDRESS`
-  /// FIXME: block_number may left dangling in inode's fields
   #[allow(dead_code)]
   fn release_block(&mut self, block_number: AddressSize) -> Result<(), Errno> {
     // 1. Basically try to find first chunk with free block number == NO_ADDRESS
@@ -426,7 +425,7 @@ impl E5FSFilesystem {
     let free_block_number = fbl_chunk.get(free_block_number_index).unwrap().to_owned();
 
     // 4. Then write block_address in place of the original `NO_ADDRESS` block
-    *fbl_chunk.get_mut(free_block_number_index).unwrap() = block_number;
+    *fbl_chunk.get_mut(free_block_number_index).unwrap() = block_address;
 
     // 5. Write mutated fbl_chunk
     self.write_block(&Block {
@@ -474,7 +473,7 @@ impl E5FSFilesystem {
     let empty_slot = inode.direct_block_numbers
       .iter()
       .zip(0..)
-      .find_map(|(&block_number, slot_index)| if block_number == NO_ADDRESS {
+      .find_map(|(&block_number, slot_index)| if block_number != NO_ADDRESS {
         Some(slot_index)
       } else {
         None
@@ -511,41 +510,50 @@ impl E5FSFilesystem {
     Ok(inode)
   }
 
-  fn shrink_file(&mut self, inode_number: AddressSize, blocks_count: AddressSize) -> Result<(), Errno> {
+  fn shrink_file(&mut self, inode_number: AddressSize, blocks_count: AddressSize) -> Result<INode, Errno> {
     // Read inode
     let mut inode = self.read_inode(inode_number);
 
-    // Find last used slot
-    let first_used_slot = inode.direct_block_numbers
+    // Find first empty slot
+    let empty_slot = inode.direct_block_numbers
       .iter()
-      .zip((0..inode.direct_block_numbers.len()).rev())
-      .find_map(|(&block_number, slot_index)| if block_number == NO_ADDRESS {
-        Some(slot_index as AddressSize)
+      .reverse()
+      .zip((inode.indirect_block_numbers..).step_by(-1))
+      .find_map(|(&block_number, slot_index)| if block_number != NO_ADDRESS {
+        Some(slot_index)
       } else {
         None
       }).ok_or_else(|| Errno::EIO)?;
 
-    let used_slots_count = inode.direct_block_numbers.len() as AddressSize - (first_used_slot + 1);
+    let free_slots_count = inode.direct_block_numbers.len() as AddressSize - (empty_slot + 1);
 
-    // Guard for not enough used slots in direct block number array
+    // Guard for not enough empty slots in direct block number array
     // TODO: implement indirect blocks
-    match used_slots_count {
-      n if blocks_count > n => return Err(Errno::EIO),
+    match free_slots_count {
+      n if n > blocks_count => return Err(Errno::EIO),
       _ => (),
     };
 
-    // Release N blocks
-     inode.direct_block_numbers[first_used_slot as usize..]
-      .iter_mut()
-      .for_each(|block_number| {
-        self.release_block(*block_number);
-        *block_number = NO_ADDRESS;
+    // Allocate new blocks and store their numbers
+    let block_numbers = (0..blocks_count).fold(Vec::new(), |mut block_numbers, _| {
+      block_numbers.push(self.claim_free_block());
+      block_numbers
+    })
+    .into_iter()
+      .collect::<Result<Vec<AddressSize>, Errno>>()?;
+
+    // Write these block numbees to direct blocks of inode
+    block_numbers
+      .iter()
+      .zip(empty_slot..inode.direct_block_numbers.len() as AddressSize)
+      .for_each(|(&block_number, index)| {
+        inode.direct_block_numbers[index as usize] = block_number;
       });
 
     // Write modified inode to the disk
     self.write_inode(&inode, inode_number)?;
 
-    Ok(())
+    Ok(inode)
   }
 
   // Errors:
