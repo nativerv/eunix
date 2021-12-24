@@ -77,12 +77,12 @@ impl <'a> DeviceFilesystem <'a> {
 }
 
 impl<'a> Filesystem for DeviceFilesystem<'a> {
-  fn read_bytes(&self, pathname: &str, count: AddressSize) -> Result<&[u8], Errno> {
-    Err(Errno::EPERM)
+  fn read_file(&self, pathname: &str, count: AddressSize) -> Result<&[u8], Errno> {
+    Err(Errno::EPERM("devfs read_bytes: permission denied"))
   }
 
-  fn write_bytes(&mut self, pathname: &str) -> Result<(), Errno> {
-    Err(Errno::EPERM)
+  fn write_file(&mut self, pathname: &str) -> Result<(), Errno> {
+    Err(Errno::EPERM("devfs write_bytes: permission denied"))
   }
 
   fn read_dir(&self, pathname: &str) -> &[VDirectoryEntry] {
@@ -114,7 +114,7 @@ impl<'a> Filesystem for DeviceFilesystem<'a> {
   // Поиск файла в файловой системе. Возвращает INode фала.
   // Для VFS сначала матчинг на маунт-поинты и вызов lookup_path("/mount/point") у конкретной файловой системы;
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
-  fn lookup_path(&self, pathname: &str) -> VINode {
+  fn lookup_path(&mut self, pathname: &str) -> Result<VINode, Errno> {
     todo!();
   }
 

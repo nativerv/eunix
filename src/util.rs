@@ -36,3 +36,20 @@ pub fn unixtime() -> u32 {
     .try_into()
     .unwrap()
 }
+
+pub fn fixedpoint<F, T>(f: F, initial: T) -> T
+  where
+    F: Fn(&T) -> T,
+    T: PartialEq,
+  
+{
+  let mut result = f(&initial);
+
+  while result != f(&result) {
+    result = f(&result);
+  }
+
+  result
+}
+
+// vim:ts=2 sw=2
