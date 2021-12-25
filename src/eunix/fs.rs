@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use core::fmt::Debug;
 
+use regex::Regex;
+
 use super::kernel::Errno;
 
 pub type AddressSize = u32;
@@ -11,10 +13,8 @@ pub type Id = u16;
 /// Use max address as indicator of no next block
 /// Can be invalid in theory if we use exactly 2047 gigs of blocks,
 /// after which the whole fs will not work anymore so who caresi guessb.
-#[allow(dead_code)]
 pub const NO_ADDRESS: AddressSize = AddressSize::MAX;
-
-#[allow(dead_code)]
+pub const EVERYTHING: AddressSize = AddressSize::MAX;
 pub const NOBODY: Id = Id::MAX;
 
 //    free?
@@ -147,13 +147,13 @@ impl std::ops::Add for FileMode {
 pub type FileDescriptor = AddressSize;
 
 pub struct FileStat {
-  mode: FileMode,
-  size: AddressSize,
-  inode_number: AddressSize,
-  links_count: AddressSize,
-  uid: u16,
-  gid: u16,
-  block_size: AddressSize,
+  pub mode: FileMode,
+  pub size: AddressSize,
+  pub inode_number: AddressSize,
+  pub links_count: AddressSize,
+  pub uid: u16,
+  pub gid: u16,
+  pub block_size: AddressSize,
 }
 
 #[derive(Debug)]
@@ -172,13 +172,13 @@ pub struct OpenFlags {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct VDirectory {
-  entries: Vec<VDirectoryEntry>,
+  pub entries: Vec<VDirectoryEntry>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct VDirectoryEntry {
-  inode_number: AddressSize,
-  name: String,
+  pub inode_number: AddressSize,
+  pub name: String,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -200,22 +200,22 @@ pub trait Filesystem {
   // pathname_from_fs_root,
   // либо ошибку если pathname_from_fs_root
   // не существует
-  fn create_file(&self)
+  fn create_file(&mut self, pathname: &str)
     -> Result<VINode, Errno>;
 
-  fn read_file(&self, inode_number: AddressSize, count: AddressSize)
+  fn read_file(&mut self, pathname: &str, count: AddressSize)
     -> Result<Vec<u8>, Errno>;
 
-  fn write_file(&mut self, inode_number: AddressSize, data: &[u8])
+  fn write_file(&mut self, pathname: &str, data: &[u8])
     -> Result<(), Errno>;
 
-  fn read_dir(&self, inode_number: AddressSize)
+  fn read_dir(&mut self, pathname: &str)
     -> Result<VDirectory, Errno>;
 
-  fn stat(&mut self, inode_number: AddressSize)
+  fn stat(&mut self, pathname: &str)
     -> Result<FileStat, Errno>;
 
-  fn change_mode(&mut self, inode_number: AddressSize, mode: FileMode)
+  fn change_mode(&mut self, pathname: &str, mode: FileMode)
     -> Result<(), Errno>;
 
   // Поиск файла в файловой системе. Возвращает INode фала.
@@ -234,6 +234,65 @@ impl Debug for dyn Filesystem {
   }
 }
 
+impl Filesystem for VFS {
+  fn create_file(&mut self, pathname: &str)
+    -> Result<VINode, Errno> {
+    let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
+    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::method: we know that mount_point exist");  
+    mounted_fs.driver.create_file(&internal_pathname)
+  }
+
+  fn read_file(&mut self, pathname: &str, count: AddressSize)
+    -> Result<Vec<u8>, Errno> {
+    let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
+    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::method: we know that mount_point exist");  
+    mounted_fs.driver.read_file(&internal_pathname, EVERYTHING)
+  }
+
+  fn write_file(&mut self, pathname: &str, data: &[u8])
+    -> Result<(), Errno> {
+    let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
+    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::method: we know that mount_point exist");  
+    mounted_fs.driver.write_file(&internal_pathname, data)
+  }
+
+  fn read_dir(&mut self, pathname: &str)
+    -> Result<VDirectory, Errno> {
+    let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
+    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::method: we know that mount_point exist");  
+    mounted_fs.driver.read_dir(&internal_pathname)
+  }
+
+  fn stat(&mut self, pathname: &str)
+    -> Result<FileStat, Errno> {
+    let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
+    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::method: we know that mount_point exist");  
+    mounted_fs.driver.stat(&internal_pathname)
+  }
+
+  fn change_mode(&mut self, pathname: &str, mode: FileMode)
+    -> Result<(), Errno> {
+    let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
+    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::method: we know that mount_point exist");  
+    mounted_fs.driver.change_mode(&internal_pathname, mode)
+  }
+
+  // Поиск файла в файловой системе. Возвращает INode фала.
+  // Для VFS сначала матчит на маунт-поинты и вызывает lookup_path("/internal/path") у конкретной файловой системы;
+  // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
+  fn lookup_path(&mut self, pathname: &str)
+    -> Result<VINode, Errno> {
+    let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
+    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::method: we know that mount_point exist");  
+    mounted_fs.driver.lookup_path(&internal_pathname)
+  }
+
+  fn get_name(&self)
+    -> String {
+    String::from("Eunix VFS")
+  }
+}
+
 #[derive(Debug)]
 pub struct FileDescription {
   inode: VINode,
@@ -241,11 +300,18 @@ pub struct FileDescription {
 }
 
 #[derive(Debug)]
-pub struct VFS<'a> {
-  pub mount_points: BTreeMap<&'a str, Box<dyn Filesystem>>,
-  pub open_files: BTreeMap<&'a str, FileDescription>,
+pub struct VFS {
+  pub mount_points: BTreeMap<String, MountedFilesystem>,
+  pub open_files: BTreeMap<String, FileDescription>,
 }
 
+#[derive(Debug)]
+pub struct MountedFilesystem {
+  r#type: RegisteredFilesystem,
+  driver: Box<dyn Filesystem>
+}
+
+#[derive(Debug)]
 pub enum RegisteredFilesystem {
   devfs,
   // procfs(ProcessFilesystem),
@@ -253,6 +319,27 @@ pub enum RegisteredFilesystem {
   e5fs,
   // tmpfs(MemFilesystem),
 }
+
+impl VFS {
+  fn match_mount_point(&self, pathname: &str)
+    -> Result<(String, String), Errno> 
+  {
+    let (mount_point, _mounted_fs) = self.mount_points
+      .iter()
+      .find(|(mount_point, _mounted_fs)| {
+        let regex = Regex::new(&regex::escape(&format!("^{}", mount_point))).unwrap();
+        regex.is_match(pathname)
+      })
+      .ok_or_else(|| Errno::ENOENT("VFS::lookup_path: no such file or directory"))?;
+
+    let regex = Regex::new(&regex::escape(&format!("^{}", mount_point)))
+      .expect("VFS::match_mount_point: regex can't be invalid because of regex::escape");
+    let internal_pathname = regex.replace_all(pathname, "").to_string();
+
+    Ok((mount_point.to_owned(), internal_pathname))
+  }
+}
+
 
 #[cfg(test)]
 mod tests {

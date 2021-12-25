@@ -28,10 +28,10 @@ use super::kernel::Errno;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct DirectoryEntry {
-  inode_number: AddressSize,
-  rec_len: u16,
-  name_len: u8,
-  name: String,
+  pub inode_number: AddressSize,
+  pub rec_len: u16,
+  pub name_len: u8,
+  pub name: String,
 }
 
 impl DirectoryEntry {
@@ -50,7 +50,7 @@ impl DirectoryEntry {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Directory {
   entries_count: AddressSize,
-  entries: Vec<DirectoryEntry>,
+  pub entries: Vec<DirectoryEntry>,
 }
 
 // 2 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + (4 * 16)
@@ -89,10 +89,10 @@ impl From<INode> for VINode {
 impl From<Directory> for VDirectory {
   fn from(dir: Directory) -> Self {
     Self {
-      entries: dir.entries.map(|entry| VDirectoryEntry {
+      entries: dir.entries.iter().map(|entry| VDirectoryEntry {
         inode_number: entry.inode_number,
-        name: entry.name,
-      }),
+        name: entry.name.to_owned(),
+      }).collect(),
     }
   }
 }
@@ -158,7 +158,7 @@ impl Superblock {
       filesystem_type: [
         'e' as u8, '5' as u8, 'f' as u8, 's' as u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
       ],
-      filesystem_size, // in blocks
+      filesystem_size, // in blocks?
       inode_table_size,
       inode_table_percentage,
       free_inodes_count: inodes_count,
@@ -304,32 +304,37 @@ pub struct E5FSFilesystem {
 }
 
 impl Filesystem for E5FSFilesystem {
-  fn create_file(&mut self)
+  fn create_file(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
-    let (_, inode) = self.allocate_file();
+    let inode_number = self.lookup_path(pathname)?.number;
+    let (_, inode) = self.allocate_file()?;
 
     Ok(inode.into())
   } 
 
-  fn read_file(&self, inode_number: AddressSize, count: AddressSize)
+  fn read_file(&mut self, pathname: &str, _count: AddressSize)
     -> Result<Vec<u8>, Errno> {
+    let inode_number = self.lookup_path(pathname)?.number;
     self.read_from_file(inode_number)
   }
 
-  fn write_file(&mut self, inode_number: AddressSize, data: &[u8])
+  fn write_file(&mut self, pathname: &str, data: &[u8])
     -> Result<(), Errno> {
+    let inode_number = self.lookup_path(pathname)?.number;
     self.write_to_file(data.to_owned(), inode_number, false)
   } 
 
-  fn read_dir(&self, inode_number: AddressSize)
+  fn read_dir(&mut self, pathname: &str)
     -> Result<VDirectory, Errno> {
+    let inode_number = self.lookup_path(pathname)?.number;
     let dir = self.read_dir_from_inode(inode_number)?;
 
     Ok(dir.into())
   }
 
-  fn stat(&mut self, inode_number: AddressSize) 
+  fn stat(&mut self, pathname: &str) 
     -> Result<FileStat, Errno> {
+    let inode_number = self.lookup_path(pathname)?.number;
     let INode {
       mode,
       file_size,
@@ -350,7 +355,9 @@ impl Filesystem for E5FSFilesystem {
     })
   }
 
-  fn change_mode(&mut self, inode_number: AddressSize, mode: FileMode) {
+  fn change_mode(&mut self, pathname: &str, mode: FileMode)
+    -> Result<(), Errno> {
+    let inode_number = self.lookup_path(pathname)?.number;
     self.write_mode(inode_number, mode)
   }
 
@@ -443,14 +450,6 @@ impl E5FSFilesystem {
     Ok(())
   }
 
-  //fn create_dir(&mut self, pathname: &str) -> Result<(), Errno> {
-    //todo!();
-  //}
-
-  //fn create_file(&mut self, pathname: &str) -> Result<(), Errno> {
-    //todo!();
-  //}
-
   fn write_dir(&mut self, dir: &Directory, inode_number: AddressSize) -> Result<(), Errno> {
     // Convert `Directory` to bytes
     let entries_count_bytes = dir.entries_count.to_le_bytes().as_slice().to_owned();
@@ -496,6 +495,11 @@ impl E5FSFilesystem {
       self.write_block(&Block { data: chunk.to_owned(), }, inode.direct_block_numbers[i])?;
     };
 
+    // Write new size to inode
+    let mut inode_cloned = inode.clone();
+    inode_cloned.file_size = data.len() as AddressSize;
+    self.write_inode(&inode_cloned, inode_number);
+
     Ok(())
   }
 
@@ -529,7 +533,7 @@ impl E5FSFilesystem {
     Ok(inode.mode)
   }
 
-  fn write_mode(&mut self, inode_number: AddressSize, mode: FileMode) -> Result<FileMode, Errno> {
+  fn write_mode(&mut self, inode_number: AddressSize, mode: FileMode) -> Result<(), Errno> {
     let mut inode = self.read_inode(inode_number);
     inode.mode = mode;
     Ok(())
@@ -539,7 +543,6 @@ impl E5FSFilesystem {
   #[allow(dead_code)]
   fn claim_free_inode(&mut self) -> Result<AddressSize, Errno> {
     let free_inode_numbers_stub = self.superblock.free_inode_numbers.clone();
-    // (free_inode_number, new_free_inode_numbers_cache)
     let maybe_free_inode_numbers = free_inode_numbers_stub
       .iter()
       .find(|&&inode_number| inode_number != NO_ADDRESS);
@@ -749,7 +752,7 @@ impl E5FSFilesystem {
     // Guard for not enough empty slots in direct block number array
     // TODO: implement indirect blocks
     match free_slots_count {
-      n if n > blocks_count => return Err(Errno::EIO("not enough empty block slots in inode")),
+      n if n < blocks_count => return Err(Errno::EIO("not enough empty block slots in inode")),
       _ => (),
     };
 

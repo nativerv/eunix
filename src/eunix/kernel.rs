@@ -29,7 +29,7 @@ impl Process<'_> {}
 
 #[derive(Debug)]
 pub struct Kernel<'a> {
-  vfs: VFS<'a>,
+  vfs: VFS,
   processes: Vec<Process<'a>>,
   current_process: u32,
   block_devices: DeviceTable,
@@ -73,7 +73,7 @@ impl <'a> Kernel<'a> {
   pub fn chmod(&mut self, file_descriptor: FileDescriptor, new_perms: Vec<u8>) -> Result<(), Errno> {
     todo!();
   }
-  pub fn getdents(&self, file_descriptor: FileDescriptor) -> Result<&'a [VDirectoryEntry<'a>], Errno> {
+  pub fn getdents(&self, file_descriptor: FileDescriptor) -> Result<Vec<VDirectoryEntry>, Errno> {
     // let process: Process = self.processes.get((self.get_current_process())).unwrap();
     //
     // let &file_description = process.file_descriptors.get(&file_descriptor).unwrap();

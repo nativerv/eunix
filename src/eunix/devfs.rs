@@ -4,7 +4,7 @@ use std::time::SystemTime;
 use crate::eunix::kernel::Kernel;
 use crate::{eunix::fs::Filesystem, machine::DeviceTable};
 
-use super::fs::{AddressSize, VDirectoryEntry, VINode};
+use super::fs::{AddressSize, VDirectoryEntry, VINode, VDirectory};
 use super::kernel::Errno;
 
 pub struct DirectoryEntry<'a> {
@@ -77,15 +77,15 @@ impl <'a> DeviceFilesystem <'a> {
 }
 
 impl<'a> Filesystem for DeviceFilesystem<'a> {
-  fn read_file(&self, pathname: &str, count: AddressSize) -> Result<&[u8], Errno> {
+  fn read_file(&mut self, pathname: &str, count: AddressSize) -> Result<Vec<u8>, Errno> {
     Err(Errno::EPERM("devfs read_bytes: permission denied"))
   }
 
-  fn write_file(&mut self, pathname: &str) -> Result<(), Errno> {
+  fn write_file(&mut self, pathname: &str, data: &[u8]) -> Result<(), Errno> {
     Err(Errno::EPERM("devfs write_bytes: permission denied"))
   }
 
-  fn read_dir(&self, pathname: &str) -> &[VDirectoryEntry] {
+  fn read_dir(&mut self, pathname: &str) -> Result<VDirectory, Errno> {
     let mut tty_devices_number: u32 = 0;
     let mut block_devices_number: u32 = 0;
 
@@ -121,6 +121,21 @@ impl<'a> Filesystem for DeviceFilesystem<'a> {
   fn get_name(&self) -> String {
     "devfs".to_owned()
   }
+
+fn create_file(&mut self, pathname: &str)
+    -> Result<VINode, Errno> {
+        todo!()
+    }
+
+fn stat(&mut self, pathname: &str)
+    -> Result<super::fs::FileStat, Errno> {
+        todo!()
+    }
+
+fn change_mode(&mut self, pathname: &str, mode: super::fs::FileMode)
+    -> Result<(), Errno> {
+        todo!()
+    }
 }
 
 // impl DeviceFilesystem {
