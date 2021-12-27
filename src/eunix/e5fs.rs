@@ -1,8 +1,13 @@
+use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::io::prelude::*;
 use std::io::SeekFrom;
 use std::io::Write;
 use std::slice::SliceIndex;
 
+use fancy_regex::Regex;
+
+use crate::eunix::fs::FileModeType;
 use crate::eunix::fs::NOBODY;
 use crate::util::fixedpoint;
 use crate::util::unixtime;
@@ -16,6 +21,7 @@ use super::fs::NO_ADDRESS;
 use super::fs::VDirectory;
 use super::fs::VDirectoryEntry;
 use super::fs::VINode;
+use super::fs;
 use super::kernel::Errno;
 
 /* 
@@ -50,7 +56,46 @@ impl DirectoryEntry {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Directory {
   entries_count: AddressSize,
-  pub entries: Vec<DirectoryEntry>,
+  pub entries: BTreeMap<String, DirectoryEntry>,
+}
+
+impl Directory {
+  pub fn new() -> Self {
+    Self {
+      entries_count: 0,
+      entries: BTreeMap::new(),
+    }
+  }
+  fn from(entries: BTreeMap<String, DirectoryEntry>) -> Self {
+    println!("[Directory::from]: entries_count: {:?}", entries.len() as AddressSize);
+    println!("[Directory::from]: entries: {:?}", entries);
+
+    Self {
+      entries_count: entries.len() as AddressSize,
+      entries,
+    }
+  }
+
+  // pub fn entries_count(&self) -> AddressSize {
+  //   self.entries_count
+  // }
+  // pub fn entries(&self) -> BTreeMap<String, DirectoryEntry> {
+  //   self.entries
+  // }
+
+  pub fn insert(&mut self, inode_number: AddressSize, name: &str) -> Result<(), Errno> {
+    self.entries.insert(
+      name.to_owned(),
+      DirectoryEntry::new(inode_number, name)?
+    );
+    self.entries_count += 1;
+    Ok(())
+  }
+  pub fn remove(&mut self, name: &str) -> Result<(), Errno> {
+    self.entries.remove(name).ok_or(Errno::ENOENT("no such file in directory"))?;
+    self.entries_count -= 1;
+    Ok(())
+  }
 }
 
 // 2 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + (4 * 16)
@@ -86,13 +131,19 @@ impl From<INode> for VINode {
   }
 }
 
+impl From<DirectoryEntry> for VDirectoryEntry {
+  fn from(entry: DirectoryEntry) -> Self {
+    Self {
+      inode_number: entry.inode_number,
+      name: entry.name,
+    }
+  }
+}
+
 impl From<Directory> for VDirectory {
   fn from(dir: Directory) -> Self {
     Self {
-      entries: dir.entries.iter().map(|entry| VDirectoryEntry {
-        inode_number: entry.inode_number,
-        name: entry.name.to_owned(),
-      }).collect(),
+      entries: dir.entries.into_iter().map(|(key, entry)| (key, entry.into())).collect(),
     }
   }
 }
@@ -133,7 +184,12 @@ pub struct Superblock {
   pub first_fbl_block_number: AddressSize,
 }
 
+
 impl Superblock {
+  fn size() -> AddressSize {
+    std::mem::size_of::<Superblock>() as AddressSize
+  }
+
   fn new(fs_info: &mut E5FSFilesystemBuilder) -> Self {
     let _superblock_size = fs_info.superblock_size;
     let filesystem_size = fs_info.filesystem_size;
@@ -226,7 +282,7 @@ impl E5FSFilesystemBuilder {
       .unwrap();
 
     let device_size = realfile.metadata().unwrap().len() as AddressSize;
-    let superblock_size = std::mem::size_of::<Superblock>() as AddressSize;
+    let superblock_size = Superblock::size();
     let inode_size = std::mem::size_of::<INode>() as AddressSize;
 
     let address_size = std::mem::size_of::<AddressSize>() as AddressSize;
@@ -306,8 +362,33 @@ pub struct E5FSFilesystem {
 impl Filesystem for E5FSFilesystem {
   fn create_file(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
-    let inode_number = self.lookup_path(pathname)?.number;
+    // Regex matching final_component of path (+ leading slash)
+    let (everything_else, dirent_name) = E5FSFilesystem::split_path(pathname)?;
+    let dir_pathname = format!("/{}", everything_else.join("/"));
+    //println!("dir_pathname: {}", dir_pathname);
+
+    // Get dir path with this regex
+    let dir_inode = self.lookup_path(dir_pathname.as_str())?;
+
+    // Read dir from disk
+    let mut dir = self.read_dir_from_inode(dir_inode.number)?;
+
+    // Guard for file already
+    if let Some(_) = dir.entries
+      .iter()
+      .find(|(name, _entry)| format!("/{}", name) == dirent_name)
+    {
+       return Err(Errno::ENOENT("file already exists"));
+    }
+
+    // Allocate inode
     let (_, inode) = self.allocate_file()?;
+
+    // Push allocated to dir
+    dir.insert(inode.number, dirent_name.as_str())?;
+
+    // Write dir
+    self.write_dir(&dir, dir_inode.number)?;
 
     Ok(inode.into())
   } 
@@ -319,9 +400,10 @@ impl Filesystem for E5FSFilesystem {
   }
 
   fn write_file(&mut self, pathname: &str, data: &[u8])
-    -> Result<(), Errno> {
+    -> Result<VINode, Errno> {
     let inode_number = self.lookup_path(pathname)?.number;
-    self.write_to_file(data.to_owned(), inode_number, false)
+    let new_vinode: VINode = self.write_to_file(data.to_owned(), inode_number, false)?.into();
+    Ok(new_vinode)
   } 
 
   fn read_dir(&mut self, pathname: &str)
@@ -368,6 +450,7 @@ impl Filesystem for E5FSFilesystem {
     -> Result<VINode, Errno> {
     let pathname = E5FSFilesystem::split_path(pathname)?;
     let (everything_else, final_component) = pathname.clone();
+    let mut inode: INode = self.read_inode(self.fs_info.root_inode_number);
 
     // Base case
     if pathname == (Vec::new(), String::from("/")) {
@@ -375,36 +458,48 @@ impl Filesystem for E5FSFilesystem {
       return Ok(inode.into());
     };
 
-    fn find_dir(e5fs: &mut E5FSFilesystem, everything_else: Vec<String>, inode_number: AddressSize) -> Result<(AddressSize, INode), Errno> {
-      match &everything_else[..] {
-        [] => {
-          Ok((inode_number, e5fs.read_inode(inode_number)))
-        },
-        // NOTICE: this syntax with recursion may blow up the stack
-        [name, everything_else @ ..] => {
-          let data = e5fs.read_from_file(inode_number)?;
-          let dir = E5FSFilesystem::parse_directory(&e5fs.fs_info, data)?;
-          if let Some(entry) = dir.entries.iter().find(|&entry| entry.name == *name) {
-            find_dir(e5fs, everything_else.iter().cloned().skip(1).collect(), entry.inode_number)
-          } else {
-            Err(Errno::ENOENT("e5fs.lookup_path > find_dir: no such file or directory"))
-          }
-        },
-      }
+    fn is_dir(inode: VINode) -> bool {
+      let filetype = inode.mode.r#type();
+      //println!("FileModeType::Dir as u8: {}", FileModeType::Dir as u8);
+      //println!("filetype: {}", filetype);
+      filetype == FileModeType::Dir as u8
     }
 
+    let mut find_dir = |e5fs: &mut E5FSFilesystem, everything_else: Vec<String>| -> Result<INode, Errno> {
+      let mut everything_else = VecDeque::from(everything_else);
+      // TODO: pass inode to read_dir_from_inode
+      while everything_else.len() > 0 {
+        if !is_dir(inode.into()) {
+          return Err(Errno::EINVAL("e5fs.lookup_path: not a directory (find_dir)"))
+        }
+
+        let piece = everything_else.pop_front().unwrap();
+        let dir = e5fs.read_dir_from_inode(inode.number)?;
+        if let Some(entry) = dir.entries.get(&piece.to_owned()) {
+          inode = e5fs.read_inode(entry.inode_number);
+        } else {
+          return Err(Errno::ENOENT("e5fs.lookup_path: no such file or directory"))
+        }
+      }
+
+      Ok(inode)
+    };
+
     // Try to find directory - "everything else" part of `pathname`
-    let (dir_inode_number, _dir_inode) = find_dir(self, everything_else, 0)?;
-    let data = self.read_from_file(dir_inode_number)?;
-    let dir = E5FSFilesystem::parse_directory(&self.fs_info, data)?;
+    let dir_inode = find_dir(self, everything_else)?;
+    let dir = self.read_dir_from_inode(dir_inode.number)?;
+
+    //println!("final_component: {}", final_component);
+    //println!("dir_inode: {:#?}", dir_inode);
+    //println!("dir: {:#?}", dir);
     
     // Try to find file in directory and map its INode to VINode -
-    // "final component" part of `pathname`, then return it.
+    // "final component" part of `pathname`, then return it
     dir.entries
-      .iter()
-      .find(|&entry| entry.name == final_component)
+      .get(&final_component)
+      // Read its inode_number
       .map(|entry| self.read_inode(entry.inode_number).into())
-      .ok_or_else(|| Errno::ENOENT("e5fs.lookup_path: no such file or directory"))
+      .ok_or_else(|| Errno::ENOENT("e5fs.lookup_path: no such file or directory (get(final_component))"))
   } 
 
   fn get_name(&self)
@@ -414,8 +509,14 @@ impl Filesystem for E5FSFilesystem {
 }
 
 impl E5FSFilesystem {
-  #[allow(dead_code)]
-  pub fn new(device_realpath: &str, inode_table_percentage: f32, block_data_size: AddressSize) -> Result<Self, Errno> {
+  /// Read filesystem from device (file on host) path
+  pub fn from(device_realpath: &str) -> Result<Self, Errno> {
+    let Superblock {
+      inode_table_percentage,
+      block_data_size,
+      ..
+    } = E5FSFilesystem::read_superblock(device_realpath);
+
     let mut fs_info = 
       E5FSFilesystemBuilder::new(
         device_realpath, 
@@ -430,7 +531,20 @@ impl E5FSFilesystem {
     })
   }
 
-  pub fn mkfs(e5fs: &mut E5FSFilesystem) -> Result<(), Errno> {
+  /// Create new filesystem and write it to disk
+  pub fn mkfs(device_realpath: &str, inode_table_percentage: f32, block_data_size: AddressSize) -> Result<Self, Errno> {
+    let mut fs_info = E5FSFilesystemBuilder::new(
+        device_realpath, 
+        inode_table_percentage, 
+        block_data_size
+      )
+      .unwrap();
+
+    let mut e5fs = Self {
+      superblock: Superblock::new(&mut fs_info),
+      fs_info,
+    };
+
     let superblock = Superblock::new(&mut e5fs.fs_info);
 
     // 1. Write Superblock
@@ -442,18 +556,15 @@ impl E5FSFilesystem {
     // 3. Write root dir - first allocated file (inode) 
     //    will always be 0-th inode in inode table
     let (root_inode_number, _) = e5fs.allocate_file()?;
-    e5fs.write_dir(&Directory {
-      entries_count: 0,
-      entries: Vec::new()
-    }, root_inode_number)?;
+    e5fs.write_dir(&Directory::new(), root_inode_number)?;
 
-    Ok(())
+    Ok(e5fs)
   }
 
-  fn write_dir(&mut self, dir: &Directory, inode_number: AddressSize) -> Result<(), Errno> {
+  fn write_dir(&mut self, dir: &Directory, inode_number: AddressSize) -> Result<INode, Errno> {
     // Convert `Directory` to bytes
     let entries_count_bytes = dir.entries_count.to_le_bytes().as_slice().to_owned();
-    let entries_bytes = dir.entries.iter().fold(Vec::new(), |mut bytes, entry| {
+    let entries_bytes = dir.entries.iter().fold(Vec::new(), |mut bytes, (_name, entry)| {
       bytes.write(entry.inode_number.to_le_bytes().as_slice()).unwrap();
       bytes.write(entry.rec_len.to_le_bytes().as_slice()).unwrap();
       bytes.write(entry.name_len.to_le_bytes().as_slice()).unwrap();
@@ -461,25 +572,31 @@ impl E5FSFilesystem {
       bytes
     });
 
+    println!("[E5FS::write_dir]: entries_count_bytes: {:?}", entries_count_bytes);
+    println!("[E5FS::write_dir]: entries_bytes: {:?}", entries_bytes);
+
     // Write them to one `Vec`
     let mut data = Vec::new();
     data.write(&entries_count_bytes).or_else(|_| Err(Errno::EIO("write_dir: can't write entries_count_bytes to data")))?;
     data.write(&entries_bytes).or_else(|_| Err(Errno::EIO("write_dir: can't write entries_bytes to data")))?;
+    println!("[E5FS::write_dir]: data: {:?}", data);
+    //println!("data: {:?}", data);
 
     // Write `Vec` to file
-    self.write_to_file(data, inode_number, false)?;
+    let new_inode = self.write_to_file(data, inode_number, false)?;
 
-    Ok(())
+    Ok(new_inode)
   }
 
   fn read_dir_from_inode(&mut self, inode_number: AddressSize) -> Result<Directory, Errno> {
-    let mut dir_bytes = self.read_from_file(inode_number)?;
+    let dir_bytes = self.read_from_file(inode_number)?;
+    //println!("dir_bytes: {:?}", dir_bytes);
     let directory = E5FSFilesystem::parse_directory(&mut self.fs_info, dir_bytes)?;
 
     Ok(directory)
   }
 
-  fn write_to_file(&mut self, data: Vec<u8>, inode_number: AddressSize, _append: bool) -> Result<(), Errno> {
+  fn write_to_file(&mut self, data: Vec<u8>, inode_number: AddressSize, _append: bool) -> Result<INode, Errno> {
     let inode = self.read_inode(inode_number);
 
     // If data is greater than available in inode's blocks,
@@ -498,9 +615,9 @@ impl E5FSFilesystem {
     // Write new size to inode
     let mut inode_cloned = inode.clone();
     inode_cloned.file_size = data.len() as AddressSize;
-    self.write_inode(&inode_cloned, inode_number);
+    self.write_inode(&inode_cloned, inode_number)?;
 
-    Ok(())
+    Ok(inode_cloned)
   }
 
   fn read_from_file(&mut self, inode_number: AddressSize) -> Result<Vec<u8>, Errno> {
@@ -508,9 +625,11 @@ impl E5FSFilesystem {
 
     let data = inode.direct_block_numbers
       .iter()
-      .filter(|&&block_number| block_number != NO_ADDRESS)
+      .take_while(|&&block_number| block_number != NO_ADDRESS)
       .fold(Vec::new(), |mut bytes, &block_number| {
-        bytes.write(&self.read_block(block_number).data).unwrap();
+        let block = self.read_block(block_number);
+        //println!("dir_block #{}: {:?}", block_number, block.data);
+        bytes.write(&block.data).unwrap();
         bytes
       });
 
@@ -955,14 +1074,19 @@ impl E5FSFilesystem {
     }
   }
 
-  #[allow(dead_code)]
-  fn read_superblock(&mut self) -> Superblock {
+  fn read_superblock(device_realpath: &str) -> Superblock {
     use std::mem::size_of;
 
-    let mut superblock_bytes = vec![0u8; self.fs_info.superblock_size.try_into().unwrap()];
+    let mut superblock_bytes = vec![0u8; Superblock::size().try_into().unwrap()];
 
-    self.fs_info.realfile.seek(SeekFrom::Start(0)).unwrap();
-    self.fs_info.realfile.read_exact(&mut superblock_bytes).unwrap();
+    let mut realfile = std::fs::OpenOptions::new()
+      .read(true)
+      .write(true)
+      .open(device_realpath)
+      .unwrap();
+
+    realfile.seek(SeekFrom::Start(0)).unwrap();
+    realfile.read_exact(&mut superblock_bytes).unwrap();
 
     // Then parse bytes, draining from vector mutably
     let filesystem_type: [u8; 16] = superblock_bytes.drain(0..16).as_slice().try_into().unwrap(); 
@@ -998,7 +1122,6 @@ impl E5FSFilesystem {
   }
 
   /// Parse one fbl block and return it for further use
-  #[allow(dead_code)]
   fn parse_block_numbers_from_block(block: &Block) -> Vec<AddressSize> {
     use std::mem::size_of;
     let data = block.data.clone();
@@ -1044,22 +1167,25 @@ impl E5FSFilesystem {
         .or_else(|_| Err(Errno::EILSEQ("can't parse entries_count from dir")))?
       );
 
-    let mut entries = Vec::new();
+    let mut entries = BTreeMap::new();
 
     for _ in 0..entries_count {
       match drain_one_entry(&mut data) {
-        Ok(entry) => entries.push(entry),
+        Ok(entry) => { 
+          //println!("parse_directory: inserting: {:?} - {:?}", entry.name.to_owned(), entry);
+          entries.insert(entry.name.to_owned(), entry); 
+        },
         Err(errno) => {
+          //println!("parse_directory: errno: {:?}", errno);
           eprintln!("info: parse_directory: got to the end of directory: errno: {:?}", errno);
           break;
         },
       }
     }
 
-    Ok(Directory { entries_count, entries })
+    Ok(Directory::from(entries))
   }
 
-  #[allow(dead_code)]
   fn generate_fbl(&self) -> Vec<Vec<AddressSize>> {
     // Basically what we do in the next ~30 lines:
     // 1. Generate addresses of free blocks
@@ -1119,7 +1245,6 @@ impl E5FSFilesystem {
       });
   }
   fn split_path(pathname: &str) -> Result<(Vec<String>, String), Errno> {
-    println!("initial pathname: {:?}", pathname);
     // Guard for empty `pathname`
     match &pathname {
       pathname if pathname.chars().count() == 0 => return Err(Errno::EINVAL("e5fs.lookup_path: zero-length path")),
@@ -1153,7 +1278,22 @@ impl E5FSFilesystem {
     {
       pathname.pop();
     }
-
+    
+    // let everything_else: Vec<String> = pathname
+    //   .split('/')
+    //
+    //   // First (root) piece is "" - make it "/"
+    //   .enumerate()
+    //   .map(|(index, piece)| if index == 0 { "/" } else { piece })
+    //
+    //   // Take one less (drop final_component)
+    //   .take(pathname.split('/').count() - 1)
+    //
+    //   // Map to owned (make borrow checker happy)
+    //   .map(|piece| piece.to_owned())
+    //   
+    //   // Collect to vector
+    //   .collect();
     let everything_else: Vec<String> = pathname
       .split('/')
       .take(pathname.split('/').count() - 1)
@@ -1163,10 +1303,6 @@ impl E5FSFilesystem {
       .split('/')
       .last()
       .expect("e5fs.split_path: we know that there is element").to_owned();
-
-    println!("stripped pathname: {}", pathname);
-    println!("everything_else:   {:?}", everything_else);
-    println!("final_component:   {}", final_component);
 
     match pathname.split('/').count() {
       // E.g. with '/test1' we have vec!["", "test1"]
@@ -1178,7 +1314,9 @@ impl E5FSFilesystem {
 
 #[cfg(test)]
 mod e5fs_fs_tests {
-  use crate::{util::{mktemp, mkenxvd}, eunix::fs::NOBODY};
+  use std::array::IntoIter;
+
+use crate::{util::{mktemp, mkenxvd}, eunix::fs::NOBODY};
   use super::*;
 
   #[test]
@@ -1186,13 +1324,14 @@ mod e5fs_fs_tests {
     let tempfile = mktemp().to_owned();
     mkenxvd("1M".to_owned(), tempfile.clone());
 
-    let mut e5fs = E5FSFilesystem::new(tempfile.as_str(), 0.05, 4096).unwrap();
+    let mut e5fs = E5FSFilesystem::mkfs(tempfile.as_str(), 0.05, 4096).unwrap();
 
     let superblock = Superblock::new(&mut e5fs.fs_info);
-
     e5fs.write_superblock(&superblock).unwrap();
 
-    let superblock_from_file = e5fs.read_superblock();
+    drop(e5fs);
+
+    let superblock_from_file = E5FSFilesystem::read_superblock(tempfile.as_str());
 
     assert_eq!(superblock_from_file, superblock);
   }
@@ -1203,7 +1342,7 @@ mod e5fs_fs_tests {
     let tempfile = mktemp().to_owned();
     mkenxvd("1M".to_owned(), tempfile.clone());
 
-    let mut e5fs = E5FSFilesystem::new(tempfile.as_str(), 0.05, 4096).unwrap(); 
+    let mut e5fs = E5FSFilesystem::mkfs(tempfile.as_str(), 0.05, 4096).unwrap();
 
     let inode_indices = 0..e5fs.fs_info.blocks_count;
     let inodes = inode_indices.clone().fold(Vec::new(), |mut vec, i| {
@@ -1246,7 +1385,7 @@ mod e5fs_fs_tests {
     let tempfile = mktemp().to_owned();
     mkenxvd("1M".to_owned(), tempfile.clone());
 
-    let mut e5fs = E5FSFilesystem::new(tempfile.as_str(), 0.05, 4096).unwrap();
+    let mut e5fs = E5FSFilesystem::mkfs(tempfile.as_str(), 0.05, 4096).unwrap();
 
     let block_indices = 0..e5fs.fs_info.blocks_count;
     let blocks = block_indices.clone().fold(Vec::new(), |mut vec, i| {
@@ -1279,7 +1418,7 @@ mod e5fs_fs_tests {
     let tempfile = mktemp().to_owned();
     mkenxvd("1M".to_owned(), tempfile.clone());
 
-    let mut e5fs = E5FSFilesystem::new(tempfile.as_str(), 0.05, 4096).unwrap();
+    let mut e5fs = E5FSFilesystem::mkfs(tempfile.as_str(), 0.05, 4096).unwrap();
 
     e5fs.write_fbl();
 
@@ -1302,7 +1441,7 @@ mod e5fs_fs_tests {
     let tempfile = mktemp().to_owned();
     mkenxvd("1M".to_owned(), tempfile.clone());
 
-    let e5fs = E5FSFilesystem::new(tempfile.as_str(), 0.05, 4096).unwrap();
+    let mut e5fs = E5FSFilesystem::mkfs(tempfile.as_str(), 0.05, 4096).unwrap();
 
     let block_numbers_per_free_blocks_chunk = e5fs.fs_info.block_data_size / std::mem::size_of::<AddressSize>() as AddressSize;
 
@@ -1322,8 +1461,7 @@ mod e5fs_fs_tests {
     let tempfile = mktemp().to_owned();
     mkenxvd("1M".to_owned(), tempfile.clone());
 
-    let mut e5fs = E5FSFilesystem::new(tempfile.as_str(), 0.05, 4096).unwrap();
-    E5FSFilesystem::mkfs(&mut e5fs).unwrap();
+    let mut e5fs = E5FSFilesystem::mkfs(tempfile.as_str(), 0.05, 4096).unwrap();
 
     // Create 2 files
     let (file1_inode_num, file1_inode) = e5fs.allocate_file().unwrap();
@@ -1344,8 +1482,7 @@ mod e5fs_fs_tests {
     let tempfile = mktemp().to_owned();
     mkenxvd("1M".to_owned(), tempfile.clone());
 
-    let mut e5fs = E5FSFilesystem::new(tempfile.as_str(), 0.05, 4096).unwrap();
-    E5FSFilesystem::mkfs(&mut e5fs).unwrap();
+    let mut e5fs = E5FSFilesystem::mkfs(tempfile.as_str(), 0.05, 4096).unwrap();
 
     // Create 2 files
     let (file1_inode_num, _) = e5fs.allocate_file().unwrap();
@@ -1356,10 +1493,10 @@ mod e5fs_fs_tests {
     let root_inode_number = e5fs.fs_info.root_inode_number;
     let expected_dir = Directory {
       entries_count: 2,
-      entries: vec![
-        DirectoryEntry::new(file1_inode_num, "hello-world1.txt").unwrap(),
-        DirectoryEntry::new(file2_inode_num, "hello-world2.txt").unwrap(),
-      ]
+      entries: BTreeMap::from_iter(IntoIter::new([
+        (String::from("hello-world1.txt"), DirectoryEntry::new(file1_inode_num, "hello-world1.txt").unwrap()),
+        (String::from("hello-world2.txt"), DirectoryEntry::new(file2_inode_num, "hello-world2.txt").unwrap()),
+      ])),
     };
     e5fs.write_dir(&expected_dir, root_inode_number).unwrap();
 
@@ -1373,8 +1510,7 @@ mod e5fs_fs_tests {
     let tempfile = mktemp().to_owned();
     mkenxvd("1M".to_owned(), tempfile.clone());
 
-    let mut e5fs = E5FSFilesystem::new(tempfile.as_str(), 0.05, 4096).unwrap();
-    E5FSFilesystem::mkfs(&mut e5fs).unwrap();
+    let mut e5fs = E5FSFilesystem::mkfs(tempfile.as_str(), 0.05, 4096).unwrap();
 
     let (fbl_block, (free_block_num, free_block_num_idx)) = e5fs.find_fbl_block(|block_number| block_number != NO_ADDRESS).unwrap().unwrap();
 
@@ -1393,10 +1529,9 @@ mod e5fs_fs_tests {
     let tempfile = mktemp().to_owned();
     mkenxvd("10M".to_owned(), tempfile.clone());
 
-    let mut e5fs = E5FSFilesystem::new(tempfile.as_str(), 0.05, 4096).unwrap();
-    E5FSFilesystem::mkfs(&mut e5fs).unwrap();
+    let mut e5fs = E5FSFilesystem::mkfs(tempfile.as_str(), 0.05, 4096).unwrap();
 
-    println!("{}", e5fs.fs_info.inodes_count);
+    //println!("{}", e5fs.fs_info.inodes_count);
 
     let root_vinode = e5fs.lookup_path("/").unwrap();
     let root_inode = e5fs.read_inode(0);
@@ -1427,14 +1562,15 @@ mod e5fs_fs_tests {
         .iter()
         .enumerate()
         .map(|(index, (inode_num, _inode))| {
-          println!("index_exp: {}", index);
-          DirectoryEntry::new(*inode_num, index.to_string().as_str()).unwrap()
+          //println!("index_exp: {}", index);
+          let name = index.to_string().as_str().to_owned();
+          (name.to_owned(), DirectoryEntry::new(*inode_num, &name).unwrap())
         })
         .collect(), 
     };
     e5fs.write_dir(&root_dir, root_inode_number).unwrap();
 
-    println!("root_dir: {:#?}", root_dir);
+    //println!("root_dir: {:#?}", root_dir);
     first_layer_files
       .iter()
       .zip(second_layer_files.chunks(10))
@@ -1446,7 +1582,8 @@ mod e5fs_fs_tests {
             .iter()
             .enumerate()
             .map(|(index, (inode_num, _inode))| {
-              DirectoryEntry::new(*inode_num, index.to_string().as_str()).unwrap()
+              let name = index.to_string();
+              (name.to_owned(), DirectoryEntry::new(*inode_num, &name).unwrap())
             })
             .collect(), 
         };
@@ -1461,7 +1598,7 @@ mod e5fs_fs_tests {
           });
       });
 
-    println!("first_layer_files: {:?}", first_layer_files);
+    //println!("first_layer_files: {:?}", first_layer_files);
 
     let first_layer_files_from_disk = (0..10).fold(Vec::new(), |mut files, cur| {
       let vinode = e5fs.lookup_path(&format!("/{}", cur.to_string().as_str())).unwrap();
@@ -1470,6 +1607,40 @@ mod e5fs_fs_tests {
     });
 
     assert_eq!(first_layer_files_from_disk, first_layer_files.iter().map(|(inode_num, _)| *inode_num).collect::<Vec<AddressSize>>());
+  }
+
+  #[test]
+  fn create_file_works() {
+    let tempfile = mktemp().to_owned();
+    mkenxvd("1M".to_owned(), tempfile.clone());
+
+    let mut e5fs = E5FSFilesystem::mkfs(tempfile.as_str(), 0.05, 4096).unwrap();
+
+    let vinode = e5fs.create_file("/test1").unwrap();
+    let vinode_from_disk: VINode = e5fs.read_inode(1).into();
+
+    assert_eq!(vinode_from_disk, vinode);
+  }
+  
+  #[test]
+  fn create_nested_file_works() {
+    let tempfile = mktemp().to_owned();
+    mkenxvd("1M".to_owned(), tempfile.clone());
+
+    let mut e5fs = E5FSFilesystem::mkfs(tempfile.as_str(), 0.05, 4096).unwrap();
+
+    let vinode1 = e5fs.create_file("/test12").unwrap();
+
+    // Change type to Dir
+    let mut inode1 = e5fs.read_inode(vinode1.number);
+    //println!("inode1_mode b: {:016b}", inode1.mode.0);
+    inode1.mode = inode1.mode.with_type(FileModeType::Dir as u8);
+    //println!("inode1_mode a: {:016b}", inode1.mode.0);
+    e5fs.write_inode(&inode1, inode1.number).unwrap();
+
+    let vinode2 = e5fs.create_file("/test12/test2").unwrap();
+
+    assert_eq!(vinode2.number, 2);
   }
 }
 

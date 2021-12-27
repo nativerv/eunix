@@ -81,7 +81,7 @@ impl<'a> Filesystem for DeviceFilesystem<'a> {
     Err(Errno::EPERM("devfs read_bytes: permission denied"))
   }
 
-  fn write_file(&mut self, pathname: &str, data: &[u8]) -> Result<(), Errno> {
+  fn write_file(&mut self, pathname: &str, data: &[u8]) -> Result<VINode, Errno> {
     Err(Errno::EPERM("devfs write_bytes: permission denied"))
   }
 

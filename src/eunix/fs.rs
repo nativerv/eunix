@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use core::fmt::Debug;
 
-use regex::Regex;
+use fancy_regex::Regex;
 
 use super::kernel::Errno;
 
@@ -34,6 +34,13 @@ pub const NOBODY: Id = Id::MAX;
 ///   011 - block  111 - unused
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FileMode(pub u16);
+pub enum FileModeType {
+  File = 0b000,
+  Dir = 0b001,
+  Sys = 0b010,
+  Block = 0b011,
+  Char = 0b100,
+}
 
 impl Default for FileMode {
   fn default() -> Self {
@@ -60,6 +67,7 @@ impl FileMode {
   
   pub fn r#type(&self) -> u8 {
     let mut current = format!("{:016b}", self.0);
+    println!("current_r#type:{}", current);
 
     u8::from_str_radix(&current[4..7], 2).expect(&format!("can't parse in type: {}", &current))
   }
@@ -94,7 +102,11 @@ impl FileMode {
     let mut current = format!("{:016b}", self.0);
     let mask = format!("{:03b}", mask);
 
+    println!("current:       {}", current);
+    // println!("mask: {}", mask);
+
     current.replace_range(4..7, &mask);
+    println!("current_after: {}", current);
     Self(u16::from_str_radix(&current, 2).expect(&format!("can't parse in type: {}", &current)))
   }
 
@@ -172,7 +184,7 @@ pub struct OpenFlags {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct VDirectory {
-  pub entries: Vec<VDirectoryEntry>,
+  pub entries: BTreeMap<String, VDirectoryEntry>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -207,7 +219,7 @@ pub trait Filesystem {
     -> Result<Vec<u8>, Errno>;
 
   fn write_file(&mut self, pathname: &str, data: &[u8])
-    -> Result<(), Errno>;
+    -> Result<VINode, Errno>;
 
   fn read_dir(&mut self, pathname: &str)
     -> Result<VDirectory, Errno>;
@@ -242,7 +254,7 @@ impl Filesystem for VFS {
     mounted_fs.driver.create_file(&internal_pathname)
   }
 
-  fn read_file(&mut self, pathname: &str, count: AddressSize)
+  fn read_file(&mut self, pathname: &str, _count: AddressSize)
     -> Result<Vec<u8>, Errno> {
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::method: we know that mount_point exist");  
@@ -250,7 +262,7 @@ impl Filesystem for VFS {
   }
 
   fn write_file(&mut self, pathname: &str, data: &[u8])
-    -> Result<(), Errno> {
+    -> Result<VINode, Errno> {
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::method: we know that mount_point exist");  
     mounted_fs.driver.write_file(&internal_pathname, data)
@@ -327,12 +339,12 @@ impl VFS {
     let (mount_point, _mounted_fs) = self.mount_points
       .iter()
       .find(|(mount_point, _mounted_fs)| {
-        let regex = Regex::new(&regex::escape(&format!("^{}", mount_point))).unwrap();
-        regex.is_match(pathname)
+        let re = Regex::new(&format!("^{}", mount_point)).unwrap();
+        re.is_match(pathname).expect("fix yo regex nerd (is_match)")
       })
       .ok_or_else(|| Errno::ENOENT("VFS::lookup_path: no such file or directory"))?;
 
-    let regex = Regex::new(&regex::escape(&format!("^{}", mount_point)))
+    let regex = Regex::new(&format!("^{}", mount_point))
       .expect("VFS::match_mount_point: regex can't be invalid because of regex::escape");
     let internal_pathname = regex.replace_all(pathname, "").to_string();
 
