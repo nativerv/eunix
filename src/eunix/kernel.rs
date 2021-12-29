@@ -123,15 +123,12 @@ impl Kernel {
     self.vfs.read_dir(pathname)
   }
   pub fn mount(&mut self, source: &str, target: &str, fs_type: FilesystemType) -> Result<(), Errno> {
-    println!("fs::mount: source: {:?}", source);
-    println!("fs::mount: target: {:?}", target);
     if let Some(_) = self.vfs.mount_points.get(target) {
       return Err(Errno::EINVAL("mount point already taken"))
     }
 
     let mounted_fs = match fs_type {
       FilesystemType::e5fs => {
-        println!("fs::mount: ping from e5fs branch ==================");
         // Find device, represented by `source` pathname in VFS
         // (we store device's VFS pathname in tuple alongside device type)
         // (because i haven't found a way to do this directly with devfs)
@@ -139,10 +136,7 @@ impl Kernel {
         // let (realpath, (_vdev_type, _vdev_path)) = self.devices().devices
         //   .iter()
         //   .find_map(|(realpath, (vdev_type, vdev_path))| {
-        //     println!("fs::mount>find_map: 1 ping");
-        //     println!("fs::mount>find_map: vdev_path: {:?}", vdev_path);
         //     let vdev_path = vdev_path.clone()?;
-        //     println!("fs::mount>find_map: 2 ping");
         //     if vdev_path == source {
         //       Some((realpath.to_owned(), (*vdev_type, Some(vdev_path))))
         //     } else {
@@ -173,9 +167,7 @@ impl Kernel {
         }
       },
       FilesystemType::devfs => {
-        println!("fs::mount: 1 ping from devfs branch");
         let devfs = eunix::devfs::DeviceFilesystem::new(self.devices());
-        println!("fs::mount: 2 ping from devfs branch");
 
         MountedFilesystem {
           r#type: FilesystemType::devfs,
@@ -184,7 +176,6 @@ impl Kernel {
       },
     };
 
-    println!("fs::mount: 1 ping before inserting");
     // Finally, insert constructed mounted_fs
     self.vfs.mount_points.insert(target.to_owned(), mounted_fs);
     if fs_type == FilesystemType::devfs {
@@ -201,7 +192,6 @@ impl Kernel {
       // *device = (device.0, Some(target.to_owned()));
       // self.devices.devices.insert(realpath, value);
     }
-    println!("fs::mount: 2 ping after inserting");
 
     Ok(())
   }

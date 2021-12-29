@@ -127,7 +127,6 @@ mod tests {
     //
     // let dev_dir = vfs.read_dir("/dev").unwrap();
     //
-    // println!("dev_dir: {:?}", dev_dir);
   }
 }
 

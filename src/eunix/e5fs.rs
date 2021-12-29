@@ -453,7 +453,6 @@ impl Filesystem for E5FSFilesystem {
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
   fn lookup_path(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
-    println!("e5fs::lookup_path: pathname: {}", pathname);
     let pathname = VFS::split_path(pathname)?;
     let (everything_else, final_component) = pathname.clone();
     let mut inode: INode = self.read_inode(self.fs_info.root_inode_number);
@@ -502,9 +501,8 @@ impl Filesystem for E5FSFilesystem {
       .ok_or_else(|| Errno::ENOENT("e5fs.lookup_path: no such file or directory (get(final_component))"))
   } 
 
-  fn get_name(&self)
-    -> String {
-    todo!();
+  fn name(&self) -> &'static str { 
+    "e5fs"
   } 
 }
 

@@ -163,8 +163,6 @@ impl Filesystem for DeviceFilesystem {
   }
 
   fn read_dir(&mut self, pathname: &str) -> Result<VDirectory, Errno> {
-    println!("devfs::read_dir: ping 1");
-    println!("devfs::read_dir: pathaname: {:?}", pathname);
     let mut tty_devices_count = 0;
     let mut block_devices_count = 0;
 
@@ -173,7 +171,6 @@ impl Filesystem for DeviceFilesystem {
     if pathname != "/" && pathname != "/." {
       return Err(Errno::ENOENT("no such file or directory"))
     }
-    println!("devfs::read_dir: ping 2");
 
     Ok(
       VDirectory {
@@ -192,15 +189,8 @@ impl Filesystem for DeviceFilesystem {
   // Для VFS сначала матчинг на маунт-поинты и вызов lookup_path("/mount/point") у конкретной файловой системы;
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
   fn lookup_path(&mut self, pathname: &str) -> Result<VINode, Errno> {
-    println!("devfs::lookup_path: ping 1");
-    println!("devfs::lookup_path: pathname: {}", pathname);
     let (everything_else, final_component) = VFS::split_path(pathname)?;
-    println!("devfs::lookup_path: ping 2");
     let dir = self.read_dir("/")?; // TODO: FIXME: magic string
-    println!("devfs::lookup_path: ping 3");
-    println!("devfs::lookup_path: dir.entries: {:#?}", dir.entries);
-    println!("devfs::lookup_path: final_component: {:?}", final_component);
-    println!("devfs::lookup_path: everything_else: {:?}", everything_else);
 
     let inode_number = if final_component == "." {
       0
@@ -215,8 +205,8 @@ impl Filesystem for DeviceFilesystem {
       .ok_or(Errno::EIO("devfs::lookup_path: can't find inode from dir"))
   }
 
-  fn get_name(&self) -> String {
-    "Eunix devfs".to_owned()
+  fn name(&self) -> &'static str {
+    "devfs"
   }
 
   fn create_file(&mut self, pathname: &str)

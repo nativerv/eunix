@@ -70,7 +70,6 @@ impl FileMode {
   
   pub fn r#type(&self) -> u8 {
     let mut current = format!("{:016b}", self.0);
-    println!("current_r#type:{}", current);
 
     u8::from_str_radix(&current[4..7], 2).expect(&format!("can't parse in type: {}", &current))
   }
@@ -105,11 +104,7 @@ impl FileMode {
     let mut current = format!("{:016b}", self.0);
     let mask = format!("{:03b}", mask);
 
-    println!("current:       {}", current);
-    // println!("mask: {}", mask);
-
     current.replace_range(4..7, &mask);
-    println!("current_after: {}", current);
     Self(u16::from_str_radix(&current, 2).expect(&format!("can't parse in type: {}", &current)))
   }
 
@@ -265,13 +260,13 @@ pub trait Filesystem {
   fn lookup_path(&mut self, pathname: &str)
     -> Result<VINode, Errno>;
 
-  fn get_name(&self)-> String;
+  fn name(&self) -> &'static str;
   fn as_any(&mut self) -> &mut dyn Any;
 }
 
 impl Debug for dyn Filesystem {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-      write!(f, "Filesystem{{{}}}", self.get_name())
+      write!(f, "Filesystem {{ {} }}", self.name())
   }
 }
 
@@ -303,13 +298,9 @@ impl Filesystem for VFS {
 
   fn read_dir(&mut self, pathname: &str)
     -> Result<VDirectory, Errno> {
-    println!("fs::read_dir: pathname: {:?}", pathname);
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
-    println!("fs::read_dir: mount_point: {:?}", mount_point);
-    println!("fs::read_dir: internal_pathname: {:?}", internal_pathname);
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::read_dir: we know that mount_point exist");  
 
-    println!("fs::read_dir: ping 1");
     // Guard for Not a directory
     match mounted_fs.driver.stat(&internal_pathname)? {
       stat if stat.mode.r#type() != FileModeType::Dir as u8 
@@ -317,7 +308,6 @@ impl Filesystem for VFS {
       _ => (),
     }
 
-    println!("fs::read_dir: ping 2");
     mounted_fs.driver.read_dir(&internal_pathname)
   }
 
@@ -340,15 +330,13 @@ impl Filesystem for VFS {
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
   fn lookup_path(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
-    println!("fs::lookup_path: pathname: {}", pathname);
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::lookup_path: we know that mount_point exist");  
     mounted_fs.driver.lookup_path(&internal_pathname)
   }
 
-  fn get_name(&self)
-    -> String {
-    String::from("Eunix VFS")
+  fn name(&self) -> &'static str {
+    "vfs"
   }
 }
 
@@ -417,7 +405,6 @@ impl VFS {
     // Guard for empty `pathname`
     match &pathname {
       pathname if pathname.chars().count() == 0 => { 
-        println!("fs::split_path: pathname: {:?}", pathname);
         return Err(Errno::EINVAL("fs::split_path: zero-length path"))
       },
       pathname if pathname
