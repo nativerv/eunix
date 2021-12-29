@@ -13,7 +13,7 @@ pub struct DirectoryEntry<'a> {
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub enum VirtualDevice {
+pub enum VirtualDeviceType {
   BlockDevice,
   TTYDevice,
 }
@@ -32,15 +32,20 @@ pub enum VirtualDevice {
 // }
 
 #[derive(Debug)]
-pub struct OperatingSystem<'a> {
-  pub kernel: Kernel<'a>,
+pub struct OperatingSystem {
+  pub kernel: Kernel,
 }
 
-pub type DeviceTable = BTreeMap<String, VirtualDevice>; 
+#[derive(Debug, Clone)]
+pub struct MachineDeviceTable {
+  pub devices: BTreeMap<String, VirtualDeviceType>,
+}
+// /// realpath -> (dev_type, pathname) 
+// pub type DeviceTable = BTreeMap<String, (VirtualDeviceType, Option<String>)>; 
 
 #[derive(Debug)]
 pub struct Machine {
-  devices: DeviceTable,
+  device_table: MachineDeviceTable,
   is_booted: bool,
 }
 
@@ -58,30 +63,32 @@ impl Machine {
       serde_yaml::from_reader::<_, MachineSchema>(machine_schema_reader)
         .unwrap();
 
-    let devices: DeviceTable = machine_schema.machine
+    let devices = MachineDeviceTable { 
+      devices: machine_schema.machine
       .get("devices")
       .unwrap()
       .into_iter()
       .map(|(_name, device)| {
-        let device_path = Path::new(&machine_schema_path).join(device.get("path").unwrap());
+        let device_path = Path::new(&machine_schema_path).parent().unwrap().join(device.get("path").unwrap());
         let device_type = device.get("type").unwrap();
 
         let a = String::from_str(device_path.to_str().unwrap()).unwrap();
         (a, match device_type.as_ref() {
-          "block" => VirtualDevice::BlockDevice,
-          "tty" => VirtualDevice::TTYDevice,
-          _ => panic!("unknown device type in {}", machine_schema_path),
+          "block" => VirtualDeviceType::BlockDevice,
+          "tty" => VirtualDeviceType::TTYDevice,
+          _ => panic!("machine: can't start: unknown device type in {}", machine_schema_path),
         })
       })
-      .collect();
+      .collect()
+    };
 
     Self {
       is_booted: false,
-      devices,
+      device_table: devices,
     }
   }
-  pub fn get_devices(&self) -> &DeviceTable {
-    &self.devices
+  pub fn device_table(&self) -> &MachineDeviceTable {
+    &self.device_table
   }
   pub fn run(&self, os: OperatingSystem) {
   }
@@ -90,5 +97,38 @@ impl Machine {
 // https://doc.rust-lang.org/std/collections/struct.BTreeMap.html
 // https://stackoverflow.com/questions/52005382/what-is-a-function-for-structs-like-javas-instanceof
 
+#[cfg(test)]
+mod tests {
+    use crate::util::{mktemp, mkenxvd};
+
+  #[test]
+  fn lookup_path_works() {
+    let tempfile = mktemp().to_owned();
+    mkenxvd("1M".to_owned(), tempfile.clone());
+
+    // let e5fs = E5FSFilesystem::mkfs(tempfile.as_str(), 0.05, 4096).unwrap();
+    //
+    // let kernel = Kernel::new();
+    //
+    // let mut mount_points = BTreeMap::new(); 
+    // mount_points.insert(String::from("/"), MountedFilesystem {
+    //   r#type: RegisteredFilesystem::e5fs,
+    //   driver: Box::new(e5fs),
+    // });
+    // mount_points.insert(String::from("/dev"), MountedFilesystem {
+    //   r#type: RegisteredFilesystem::devfs,
+    //   driver: Box::new(DeviceFilesystem::new(&crate::eunix::kernel::KernelDeviceTable { devices:  }),
+    //                    });
+    //
+    //   let mut vfs = VFS {
+    //     open_files: BTreeMap::new(),
+    //     mount_points,
+    //   };
+    //
+    // let dev_dir = vfs.read_dir("/dev").unwrap();
+    //
+    // println!("dev_dir: {:?}", dev_dir);
+  }
+}
 
 // vim:ts=2 sw=2

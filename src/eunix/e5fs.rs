@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::io::prelude::*;
@@ -21,7 +22,7 @@ use super::fs::NO_ADDRESS;
 use super::fs::VDirectory;
 use super::fs::VDirectoryEntry;
 use super::fs::VINode;
-use super::fs;
+use super::fs::VFS;
 use super::kernel::Errno;
 
 /* 
@@ -47,7 +48,7 @@ impl DirectoryEntry {
     Ok(Self {
       inode_number,
       rec_len: (size_of::<AddressSize>() + size_of::<u16>() + size_of::<u8>() + name.len()) as u16,
-      name_len: name.len().try_into().or_else(|_| Err(Errno::EINVAL("DirectoryEntry::new: name can't be bigger than 255")))?,
+      name_len: name.len().try_into().or_else(|_| Err(Errno::ENAMETOOLONG("DirectoryEntry::new: name can't be bigger than 255")))?,
       name: name.to_owned(),
     })
   }
@@ -357,10 +358,18 @@ pub struct E5FSFilesystem {
 }
 
 impl Filesystem for E5FSFilesystem {
+  fn as_any(&mut self) -> &mut dyn Any {
+    self
+  }
+
   fn create_file(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
     // Regex matching final_component of path (+ leading slash)
-    let (everything_else, dirent_name) = E5FSFilesystem::split_path(pathname)?;
+    let (everything_else, dirent_name) = VFS::split_path(pathname)?;
+    // NOTICE: there may be problems/conflicts with leading / insertion
+    //         in intermadiate path representations
+    //         see: `Filesystem::lookup_path` implementations,
+    //              `VFS::match_mount_point`
     let dir_pathname = format!("/{}", everything_else.join("/"));
 
     // Get dir path with this regex
@@ -374,7 +383,7 @@ impl Filesystem for E5FSFilesystem {
       .iter()
       .find(|(name, _entry)| format!("/{}", name) == dirent_name)
     {
-       return Err(Errno::ENOENT("file already exists"));
+       return Err(Errno::EINVAL("file already exists"));
     }
 
     // Allocate inode
@@ -444,7 +453,8 @@ impl Filesystem for E5FSFilesystem {
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
   fn lookup_path(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
-    let pathname = E5FSFilesystem::split_path(pathname)?;
+    println!("e5fs::lookup_path: pathname: {}", pathname);
+    let pathname = VFS::split_path(pathname)?;
     let (everything_else, final_component) = pathname.clone();
     let mut inode: INode = self.read_inode(self.fs_info.root_inode_number);
 
@@ -464,7 +474,7 @@ impl Filesystem for E5FSFilesystem {
       // TODO: pass inode to read_dir_from_inode
       while everything_else.len() > 0 {
         if !is_dir(inode.into()) {
-          return Err(Errno::EINVAL("e5fs.lookup_path: not a directory (find_dir)"))
+          return Err(Errno::ENOTDIR("e5fs.lookup_path: not a directory (find_dir)"))
         }
 
         let piece = everything_else.pop_front().unwrap();
@@ -1225,72 +1235,6 @@ impl E5FSFilesystem {
         self.write_block(&block, block_number).unwrap();
       });
   }
-  fn split_path(pathname: &str) -> Result<(Vec<String>, String), Errno> {
-    // Guard for empty `pathname`
-    match &pathname {
-      pathname if pathname.chars().count() == 0 => return Err(Errno::EINVAL("e5fs.lookup_path: zero-length path")),
-      pathname if pathname
-        .chars()
-        .nth(0)
-        .unwrap() != '/' => return Err(Errno::EINVAL("e5fs.lookup_path: path must start with '/'")),
-      _ => (),
-    };
-
-    // Replace all adjacent slashes
-    let mut pathname = fixedpoint(|pathname| pathname.replace("//", "/"), pathname.to_owned());
-
-    // Base case: return root directory '/'
-    if pathname == "/" {
-      // Zeroeth inode shall always be root inode
-      return Ok((Vec::new(), "/".to_owned()));
-    }
-
-    // "Recurse" case: we know that path len is greater than 1 and is not equal to '/' 
-
-    // Remove trailing slash - which must be here
-    pathname.remove(0);
-
-    // Remove ending slash if present
-    if pathname
-      .chars()
-      .last()
-      .expect("we know that chars().count() >= 1 but is not '/' 
-              because of guard and base case") == '/' 
-    {
-      pathname.pop();
-    }
-    
-    // let everything_else: Vec<String> = pathname
-    //   .split('/')
-    //
-    //   // First (root) piece is "" - make it "/"
-    //   .enumerate()
-    //   .map(|(index, piece)| if index == 0 { "/" } else { piece })
-    //
-    //   // Take one less (drop final_component)
-    //   .take(pathname.split('/').count() - 1)
-    //
-    //   // Map to owned (make borrow checker happy)
-    //   .map(|piece| piece.to_owned())
-    //   
-    //   // Collect to vector
-    //   .collect();
-    let everything_else: Vec<String> = pathname
-      .split('/')
-      .take(pathname.split('/').count() - 1)
-      .map(|piece| piece.to_owned())
-      .collect();
-    let final_component: String = pathname
-      .split('/')
-      .last()
-      .expect("e5fs.split_path: we know that there is element").to_owned();
-
-    match pathname.split('/').count() {
-      // E.g. with '/test1' we have vec!["", "test1"]
-      1 => Ok((Vec::new(), final_component)),
-      _ => Ok((everything_else, final_component)),
-    }
-  }
 }
 
 #[cfg(test)]
@@ -1615,87 +1559,6 @@ use crate::{util::{mktemp, mkenxvd}, eunix::fs::NOBODY};
     let vinode2 = e5fs.create_file("/test12/test2").unwrap();
 
     assert_eq!(vinode2.number, 2);
-  }
-}
-
-#[cfg(test)]
-mod e5fs_split_path_tests {
-  use super::*;
-
-  #[test]
-  fn split_path_root() {
-    assert_eq!(E5FSFilesystem::split_path("/").unwrap(), ((Vec::new(), String::from("/"))));
-  }
-  #[test]
-  fn split_path_only_slashes() {
-    assert_eq!(E5FSFilesystem::split_path("//////").unwrap(), ((Vec::new(), String::from("/"))));
-    assert_eq!(E5FSFilesystem::split_path("/////").unwrap(), ((Vec::new(), String::from("/"))));
-    assert_eq!(E5FSFilesystem::split_path("////").unwrap(), ((Vec::new(), String::from("/"))));
-    assert_eq!(E5FSFilesystem::split_path("///").unwrap(), ((Vec::new(), String::from("/"))));
-    assert_eq!(E5FSFilesystem::split_path("//").unwrap(), ((Vec::new(), String::from("/"))));
-  }
-  #[test]
-  fn split_path_valid_1() {
-    assert_eq!(E5FSFilesystem::split_path("/test1").unwrap(), ((Vec::new(), String::from("test1"))));
-  }
-  #[test]
-  fn split_path_valid_2() {
-    assert_eq!(E5FSFilesystem::split_path("/test1/test2").unwrap(), ((vec![String::from("test1")], String::from("test2"))));
-  }
-  #[test]
-  fn split_path_valid_3() {
-    assert_eq!(E5FSFilesystem::split_path("/test1/test2/test3").unwrap(), ((vec![String::from("test1"), String::from("test2")], String::from("test3"))));
-  }
-  #[test]
-  fn split_path_valid_multiple_slashes() {
-    assert_eq!(E5FSFilesystem::split_path("//test1//test2///test3////").unwrap(), ((vec![String::from("test1"), String::from("test2")], String::from("test3"))));
-  }
-  #[test]
-  fn split_path_valid_onechar_1() {
-    assert_eq!(E5FSFilesystem::split_path("/a").unwrap(), ((Vec::new(), String::from("a"))));
-  }
-  #[test]
-  fn split_path_valid_onechar_2() {
-    assert_eq!(E5FSFilesystem::split_path("/a/b").unwrap(), ((vec![String::from("a")], String::from("b"))));
-  }
-  #[test]
-  fn split_path_valid_onechar_3() {
-    assert_eq!(E5FSFilesystem::split_path("/a/b/c").unwrap(), ((vec![String::from("a"), String::from("b")], String::from("c"))));
-  }
-  #[test]
-  fn split_path_zero_length() {
-    match E5FSFilesystem::split_path("") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL("e5fs.lookup_path: zero-length path")),
-      _ => unreachable!(),
-    };
-  }
-  #[test]
-  fn split_path_invalid_1() {
-    match E5FSFilesystem::split_path("test1") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL("e5fs.lookup_path: path must start with '/'")),
-      _ => unreachable!(),
-    };
-  }
-  #[test]
-  fn split_path_invalid_1_trailing() {
-    match E5FSFilesystem::split_path("test1/") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL("e5fs.lookup_path: path must start with '/'")),
-      _ => unreachable!(),
-    };
-  }
-  #[test]
-  fn split_path_invalid_2() {
-    match E5FSFilesystem::split_path("test1/test2") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL("e5fs.lookup_path: path must start with '/'")),
-      _ => unreachable!(),
-    };
-  }
-  #[test]
-  fn split_path_invalid_3() {
-    match E5FSFilesystem::split_path("test1/test2/test3") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL("e5fs.lookup_path: path must start with '/'")),
-      _ => unreachable!(),
-    };
   }
 }
 

@@ -9,6 +9,7 @@ edition = "2021"
 serde = { version = "1.0.130", features = ["derive"] }
 serde_yaml = "0.8"
 fancy-regex = "0.7.1"
+itertools = "0.10.3"
 
 [profile.dev]
 debug = true
