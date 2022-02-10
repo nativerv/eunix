@@ -141,7 +141,7 @@ impl DeviceFilesystem {
   }
 
   pub(crate) fn device_by_path(&self, pathname: &str) -> Result<String, Errno> {
-    let (everything_else, final_component) = VFS::split_path(pathname)?;
+    let (_everything_else, final_component) = VFS::split_path(pathname)?;
     let device_names = self.device_names();
     let realpath = device_names.get(&final_component).ok_or(Errno::ENOENT("no device corresponds to that name"))?;
 
@@ -168,6 +168,7 @@ impl Filesystem for DeviceFilesystem {
 
     let (everything_else, _) = VFS::split_path(pathname)?;
 
+    // TODO: FIXME: remove /. when .. and . is implemented 
     if pathname != "/" && pathname != "/." {
       return Err(Errno::ENOENT("no such file or directory"))
     }

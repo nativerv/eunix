@@ -2,10 +2,9 @@ use crate::eunix::devfs::DeviceFilesystem;
 use crate::eunix::fs::{FileDescription, FileDescriptor, VFS, OpenMode, MountedFilesystem};
 use crate::*;
 use crate::machine::{MachineDeviceTable, VirtualDeviceType};
-use std::any::Any;
 use std::collections::BTreeMap;
 
-use super::fs::{AddressSize, OpenFlags, VDirectoryEntry, Filesystem, FilesystemType, VDirectory};
+use super::fs::{AddressSize, OpenFlags,  Filesystem, FilesystemType, VDirectory};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Errno {
@@ -129,21 +128,6 @@ impl Kernel {
 
     let mounted_fs = match fs_type {
       FilesystemType::e5fs => {
-        // Find device, represented by `source` pathname in VFS
-        // (we store device's VFS pathname in tuple alongside device type)
-        // (because i haven't found a way to do this directly with devfs)
-        // (see `KernelDeviceTable`)
-        // let (realpath, (_vdev_type, _vdev_path)) = self.devices().devices
-        //   .iter()
-        //   .find_map(|(realpath, (vdev_type, vdev_path))| {
-        //     let vdev_path = vdev_path.clone()?;
-        //     if vdev_path == source {
-        //       Some((realpath.to_owned(), (*vdev_type, Some(vdev_path))))
-        //     } else {
-        //       None
-        //     }
-        //   }).ok_or(Errno::ENOENT("no such device"))?;
-
         let (mount_point, internal_path) = self.vfs.match_mount_point(source)?;
         let mounted_fs = self.vfs.mount_points.get_mut(&mount_point).expect("VFS::lookup_path: we know that mount_point exist");  
 
@@ -178,20 +162,6 @@ impl Kernel {
 
     // Finally, insert constructed mounted_fs
     self.vfs.mount_points.insert(target.to_owned(), mounted_fs);
-    if fs_type == FilesystemType::devfs {
-      // let (_, device_name) = VFS::split_path(source)?;
-      // let fs = self.vfs.mount_points
-      //   .get(target)
-      //   .expect(&format!("we know that '{}' mount point exist", target));
-      // let devfs: Box<DeviceFilesystem> = unsafe { 
-      //   std::mem::transmute::<Box<dyn Any>, Box<DeviceFilesystem>>(fs.driver) 
-      // };
-      // let device_names = Kernel::device_names(&mut self.device_table);
-      // let realpath = device_names.get(device_name.as_str()).unwrap();
-      // let device = self.device_table.devices.get_mut(realpath).unwrap();
-      // *device = (device.0, Some(target.to_owned()));
-      // self.devices.devices.insert(realpath, value);
-    }
 
     Ok(())
   }
