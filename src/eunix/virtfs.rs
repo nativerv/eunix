@@ -27,7 +27,7 @@ use super::fs::VINode;
 use super::fs::VFS;
 use super::kernel::Errno;
 
-trait VirtFsFile = Clone + Default + fmt::Display;
+pub trait VirtFsFile = Clone + Default + fmt::Display;
 
 const ROOT_INODE_NUMBER: AddressSize = 0;
 
@@ -207,15 +207,14 @@ pub struct Block {
   data: Vec<u8>,
 }
 
-#[allow(dead_code)]
 pub struct VirtFsFilesystem<T: VirtFsFile> {
-  superblock: Superblock<T>,
+  pub superblock: Superblock<T>,
   name: String,
 }
 
 impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
   fn as_any(&mut self) -> &mut dyn Any {
-    todo!("ah shit, here we go again")
+    unimplemented!("virtfs: as_any for virtfs is undefined")
   }
 
   fn create_file(&mut self, pathname: &str)
@@ -337,7 +336,7 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
       let mut everything_else = VecDeque::from(everything_else);
       // TODO: pass inode to read_dir_from_inode
       while everything_else.len() > 0 {
-        if !is_dir(inode.into()) {
+        if !is_dir(inode.clone().into()) {
           return Err(Errno::ENOTDIR("virtfs.lookup_path: not a directory (find_dir)"))
         }
 
@@ -369,27 +368,27 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
     )
   } 
 
-  fn name(&self) -> &'static str { 
-    &self.name()
+  fn name(&self) -> String { 
+    self.name().clone()
   } 
 }
 
 impl<T: VirtFsFile> VirtFsFilesystem<T> {
-  /// Read filesystem from device (file on host) path
-  pub fn new(name: &str) -> Result<Self, Errno> {
-    Ok(Self {
+  /// Construct new virtfs
+  pub fn new(name: &str) -> Self {
+    Self {
       superblock: Superblock::new(),
       name: name.to_owned(),
-    })
+    }
   }
 
   pub fn name(&self) -> String {
-    self.name
+    self.name.clone()
   }
 
   fn write_dir(&mut self, dir: &Directory, inode_number: AddressSize) -> Result<(), Errno> {
     if let Some(inode) = self.superblock.inodes.get_mut(inode_number as usize) {
-      inode.payload = VirtFsINodePayload::Directory(*dir);
+      inode.payload = VirtFsINodePayload::Directory(dir.clone());
       Ok(())
     } else {
       Err(Errno::ENOENT("virtfs: no such file or directory"))
@@ -410,7 +409,7 @@ impl<T: VirtFsFile> VirtFsFilesystem<T> {
        .superblock
        .inodes
        .get(inode_number as usize)
-       .map(|inode| inode.payload)
+       .map(|inode| inode.payload.clone())
        .ok_or(Errno::ENOENT("virtfs: read_from_file: no such file or directory"))
   }
 

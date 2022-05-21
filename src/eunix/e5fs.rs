@@ -501,8 +501,8 @@ impl Filesystem for E5FSFilesystem {
       .ok_or_else(|| Errno::ENOENT("e5fs.lookup_path: no such file or directory (get(final_component))"))
   } 
 
-  fn name(&self) -> &'static str { 
-    "e5fs"
+  fn name(&self) -> String { 
+    String::from("e5fs")
   } 
 }
 

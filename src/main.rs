@@ -37,6 +37,7 @@ pub fn main() {
   E5FSFilesystem::mkfs(sda1_realpath, 0.05, 4096).unwrap();
 
   os.kernel.mount("", "/dev", eunix::fs::FilesystemType::devfs).unwrap();
+  os.kernel.mount("", "/bin", eunix::fs::FilesystemType::binfs).unwrap();
   os.kernel.mount("/dev/sda", "/", eunix::fs::FilesystemType::e5fs).unwrap();
 
   let fd = os.kernel

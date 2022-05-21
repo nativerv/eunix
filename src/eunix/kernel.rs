@@ -1,10 +1,12 @@
 use crate::eunix::devfs::DeviceFilesystem;
+use crate::eunix::binfs::BinFilesytem;
 use crate::eunix::fs::{FileDescription, FileDescriptor, VFS, OpenMode, MountedFilesystem};
 use crate::*;
 use crate::machine::{MachineDeviceTable, VirtualDeviceType};
 use std::collections::BTreeMap;
 
-use super::fs::{AddressSize, OpenFlags,  Filesystem, FilesystemType, VDirectory};
+use super::fs::{AddressSize, OpenFlags,  Filesystem, FilesystemType, VDirectory, Id};
+use super::virtfs::VirtFsFilesystem;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Errno {
@@ -34,14 +36,24 @@ pub enum Errno {
   EBADFS(&'static str),
 }
 
+const ROOT_UID: Id = 0;
+
 #[derive(Debug)]
 pub struct Process {
   pub file_descriptors: BTreeMap<FileDescriptor, FileDescription>,
-  pub uid: i32,
+  pub uid: Id,
   pub binary: String,
 }
 
-impl Process {}
+impl Process {
+  fn new() -> Self {
+    Self {
+      file_descriptors: BTreeMap::new(),
+      uid: ROOT_UID,
+      binary: String::from("/bin/init"),
+    }
+  }
+}
 
 #[derive(Debug, Clone)]
 pub struct KernelDeviceTable {
@@ -75,7 +87,14 @@ impl Kernel {
         mount_points: BTreeMap::new(),
         open_files: BTreeMap::new(),
       },
-      processes: BTreeMap::new(),
+      processes: vec![
+        // Scrap this (leave empty Vec) and do exec /bin/init right away?
+        Process {
+          file_descriptors: BTreeMap::new(),
+          uid: ROOT_UID,
+          binary: String::from("/bin/init"),
+        }
+      ],
       current_process_id: 1,
       device_table: devices.clone().into(),
     }
@@ -102,7 +121,8 @@ impl Kernel {
 
 impl Kernel {
   pub fn open(&mut self, pathname: &str, flags: OpenFlags) -> Result<FileDescriptor, Errno> {
-    let current_process = self.processes
+    let current_process = self
+      .processes
       .get_mut(self.current_process_id as usize)
       .ok_or(Errno::ESRCH("open: cannot get current process"))?; 
     
@@ -118,6 +138,7 @@ impl Kernel {
       file_description.to_owned()
     );
 
+    // We know that `len()` is at least 1
     Ok((current_process.file_descriptors.len() - 1) as FileDescriptor)
   }
 
@@ -183,6 +204,14 @@ impl Kernel {
         MountedFilesystem {
           r#type: FilesystemType::e5fs,
           driver: Box::new(e5fs),
+        }
+      },
+      FilesystemType::binfs => {
+        let binfs = BinFilesytem::new();
+
+        MountedFilesystem {
+          r#type: FilesystemType::binfs,
+          driver: Box::new(binfs),
         }
       },
       FilesystemType::devfs => {

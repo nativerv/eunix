@@ -280,7 +280,7 @@ pub trait Filesystem {
   fn lookup_path(&mut self, pathname: &str)
     -> Result<VINode, Errno>;
 
-  fn name(&self) -> &'static str;
+  fn name(&self) -> String;
   fn as_any(&mut self) -> &mut dyn Any;
 }
 
@@ -355,8 +355,8 @@ impl Filesystem for VFS {
     mounted_fs.driver.lookup_path(&internal_pathname)
   }
 
-  fn name(&self) -> &'static str {
-    "vfs"
+  fn name(&self) -> String {
+    String::from("vfs")
   }
 }
 
@@ -397,6 +397,7 @@ impl MountedFilesystem {
 #[derive(Debug, PartialEq, Eq)]
 pub enum FilesystemType {
   devfs,
+  binfs,
   // procfs(ProcessFilesystem),
   // sysfs(SysFilesystem),
   e5fs,

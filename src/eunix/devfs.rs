@@ -206,8 +206,8 @@ impl Filesystem for DeviceFilesystem {
       .ok_or(Errno::EIO("devfs::lookup_path: can't find inode from dir"))
   }
 
-  fn name(&self) -> &'static str {
-    "devfs"
+  fn name(&self) -> String {
+    String::from("devfs")
   }
 
   fn create_file(&mut self, pathname: &str)
