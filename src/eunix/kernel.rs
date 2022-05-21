@@ -30,13 +30,15 @@ pub enum Errno {
   EILSEQ(&'static str),
   /// No such process
   ESRCH(&'static str),
+  /// Bad filesystem (not standart)
+  EBADFS(&'static str),
 }
 
 #[derive(Debug)]
 pub struct Process {
-  file_descriptors: BTreeMap<FileDescriptor, FileDescription>,
-  uid: i32,
-  binary: String,
+  pub file_descriptors: BTreeMap<FileDescriptor, FileDescription>,
+  pub uid: i32,
+  pub binary: String,
 }
 
 impl Process {}
@@ -61,7 +63,7 @@ impl From<MachineDeviceTable> for KernelDeviceTable {
 pub struct Kernel {
   pub vfs: VFS,
   pub processes: Vec<Process>,
-  pub current_process_id: u32,
+  pub current_process_id: AddressSize,
   pub device_table: KernelDeviceTable,
   // registered_filesystems: BTreeMap<>,
 }
@@ -73,7 +75,7 @@ impl Kernel {
         mount_points: BTreeMap::new(),
         open_files: BTreeMap::new(),
       },
-      processes: Vec::new(),
+      processes: BTreeMap::new(),
       current_process_id: 1,
       device_table: devices.clone().into(),
     }
@@ -93,9 +95,42 @@ impl Kernel {
 }
 
 impl Kernel {
-  pub fn open(&mut self, pathname: &str, flags: OpenFlags) -> Result<FileDescriptor, Errno> {
-    todo!();
+  pub fn start() {
+
   }
+}
+
+impl Kernel {
+  pub fn open(&mut self, pathname: &str, flags: OpenFlags) -> Result<FileDescriptor, Errno> {
+    let current_process = self.processes
+      .get_mut(self.current_process_id as usize)
+      .ok_or(Errno::ESRCH("open: cannot get current process"))?; 
+    
+    let vinode = self.vfs.lookup_path(pathname)?;
+    let file_description = FileDescription {
+      vinode,
+      flags,
+      pathname: pathname.to_owned(),
+    };
+
+    current_process.file_descriptors.insert(
+      current_process.file_descriptors.len() as FileDescriptor,
+      file_description.to_owned()
+    );
+
+    Ok((current_process.file_descriptors.len() - 1) as FileDescriptor)
+  }
+
+  pub fn close(&mut self, file_descriptor: FileDescriptor) -> Result<(), Errno> {
+    let current_process = self.processes
+      .get_mut(self.current_process_id as usize)
+      .ok_or(Errno::ESRCH("open: cannot get current process"))?; 
+    
+    current_process.file_descriptors.remove(&file_descriptor);
+
+    Ok(())
+  }
+
   pub fn read(&self, file_descriptor: FileDescriptor, count: AddressSize) -> Result<Vec<u8>, Errno> {
     todo!();
   }
@@ -108,7 +143,7 @@ impl Kernel {
   pub fn getdents(&mut self, file_descriptor: FileDescriptor) -> Result<VDirectory, Errno> {
     let process = self.processes.get(self.current_process_id() as usize).ok_or(Errno::ESRCH("cannot get current process"))?;
     let FileDescription {
-      inode: _inode,
+      vinode: _inode,
       flags,
       pathname,
     } = process.file_descriptors.get(&file_descriptor).ok_or(Errno::ENOENT("no such file descriptor"))?;

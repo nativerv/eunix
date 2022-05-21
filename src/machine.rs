@@ -6,11 +6,6 @@ use crate::eunix::fs::AddressSize;
 use crate::eunix::kernel::Kernel;
 use std::collections::BTreeMap;
 
-pub struct DirectoryEntry<'a> {
-  inode_address: AddressSize,
-  name: &'a str,
-  next_dir_entry_offset: AddressSize,
-}
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum VirtualDeviceType {

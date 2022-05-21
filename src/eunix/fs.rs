@@ -175,9 +175,9 @@ pub enum OpenMode {
 
 #[derive(Debug, Clone, Copy)]
 pub struct OpenFlags {
-  mode: OpenMode,
-  create: bool,
-  append: bool,
+  pub mode: OpenMode,
+  pub create: bool,
+  pub append: bool,
 }
 impl OpenFlags {
   pub fn mode(&self) -> OpenMode {
@@ -188,6 +188,26 @@ impl OpenFlags {
   }
   pub fn append(&self) -> bool {
     self.append
+  }
+
+  pub fn new(mode: OpenMode, create: bool, append: bool) -> Self {
+    Self {
+      mode,
+      create,
+      append,
+    }
+  }
+  pub fn with_mode(mut self, mode: OpenMode) -> Self {
+    self.mode = mode;
+    self
+  }
+  pub fn with_create(mut self, create: bool) -> Self {
+    self.create = create;
+    self
+  }
+  pub fn with_append(mut self, append: bool) -> Self {
+    self.append = append;
+    self
   }
 }
 
@@ -217,7 +237,7 @@ impl VDirectoryEntry {
   }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
 pub struct VINode {
   pub mode: FileMode,
   pub links_count: AddressSize,
@@ -342,9 +362,19 @@ impl Filesystem for VFS {
 
 #[derive(Debug, Clone)]
 pub struct FileDescription {
-  pub inode: VINode,
+  pub vinode: VINode,
   pub flags: OpenFlags,
   pub pathname: String,
+}
+impl FileDescription {
+  // pub fn new() {
+  //   pub vinode: VINode,
+  //   pub flags: OpenFlags,
+  //   pub pathname: String,
+  //   FileDescription {
+  //     vinode:
+  //   }
+  // }
 }
 
 #[derive(Debug)]
@@ -374,6 +404,16 @@ pub enum FilesystemType {
 }
 
 impl VFS {
+  pub fn add_open_file(&mut self, pathname: &str, file_description: &FileDescription) -> Result<(), Errno> {
+    self.open_files.insert(pathname.to_owned(), file_description.clone());
+
+    Ok(())
+  }
+
+  pub fn remove_open_file(&mut self, pathname: &str, file_description: &FileDescription) -> Result<(), Errno> {
+    self.open_files.remove(pathname).ok_or_else(|| Errno::ENOENT("vfs: no such file was open")).map(|_| ())
+  }
+
   pub fn match_mount_point(&self, pathname: &str)
     -> Result<(String, String), Errno> 
   {

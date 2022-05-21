@@ -1,10 +1,13 @@
+#![feature(type_alias_impl_trait)]
+#![feature(trait_alias)]
+
 mod eunix;
 mod machine;
 mod util;
 
 use machine::{Machine, OperatingSystem};
 
-use crate::{eunix::{e5fs::*, fs::Filesystem}, machine::VirtualDeviceType};
+use crate::{eunix::{e5fs::*, fs::{Filesystem, OpenFlags, OpenMode}}, machine::VirtualDeviceType};
 use std::{
   fs::File,
   io::{Read, Seek, SeekFrom},
@@ -36,7 +39,18 @@ pub fn main() {
   os.kernel.mount("", "/dev", eunix::fs::FilesystemType::devfs).unwrap();
   os.kernel.mount("/dev/sda", "/", eunix::fs::FilesystemType::e5fs).unwrap();
 
+  let fd = os.kernel
+    .open("/test-file.txt", OpenFlags { 
+      mode: OpenMode::ReadWrite, 
+      create: true, 
+      append: true 
+    })
+    .unwrap();
+
+  os.kernel.close(fd).unwrap();
+
   println!("mount_points: {:#?}", os.kernel.vfs().mount_points);
+  println!("processes: {:#?}", os.kernel.processes());
 }
 
 // vim:ts=2 sw=2
