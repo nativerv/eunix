@@ -52,6 +52,19 @@ pub fn main() {
 
   println!("mount_points: {:#?}", os.kernel.vfs().mount_points);
   println!("processes: {:#?}", os.kernel.processes());
+
+  let mut quit = false;
+  let mut command = String::new();
+
+  use std::io::*;
+
+  while !quit {
+    command.clear();
+    print!("# ");
+    stdout().flush();
+    stdin().read_line(&mut command);
+    println!("{command}");
+  }
 }
 
 // vim:ts=2 sw=2

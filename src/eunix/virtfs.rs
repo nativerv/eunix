@@ -370,6 +370,11 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
 
   fn name(&self) -> String { 
     self.name().clone()
+  }
+
+  fn create_dir(&mut self, pathname: &str)
+    -> Result<VINode, Errno> {
+    todo!()
   } 
 }
 

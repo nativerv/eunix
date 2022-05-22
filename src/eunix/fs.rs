@@ -4,7 +4,7 @@ use core::fmt::Debug;
 use fancy_regex::Regex;
 use itertools::Itertools;
 
-use crate::util::fixedpoint;
+use crate::util::{fixedpoint, unixtime};
 
 use super::kernel::Errno;
 
@@ -19,6 +19,14 @@ pub type Id = u16;
 pub const NO_ADDRESS: AddressSize = AddressSize::MAX;
 pub const EVERYTHING: AddressSize = AddressSize::MAX;
 pub const NOBODY: Id = Id::MAX;
+
+enum Devtype {
+  File  = 0b000,
+  Dir   = 0b001,
+  Sys   = 0b010,
+  Block = 0b011,
+  Char  = 0b100,
+}
 
 //    free?
 ///   | unused
@@ -250,6 +258,28 @@ pub struct VINode {
   pub number: AddressSize,
 }
 
+impl VINode {
+  fn new() -> Self {
+    // NOTICE: this is unfinished artifact
+    Self {
+      mode: FileMode::zero()
+        .with_free(0)
+        .with_type(Devtype::Char as u8)
+        .with_user(0b111)
+        .with_group(0b000)
+        .with_others(0b000),
+      links_count: 1,
+      uid: 0,
+      gid: 0,
+      file_size: 0,
+      atime: unixtime(),
+      mtime: unixtime(),
+      ctime: unixtime(),
+      number: 0,
+    }
+  }
+}
+
 pub trait Filesystem {
   // Получить count байт из файловой
   // системы по указанному
@@ -257,6 +287,9 @@ pub trait Filesystem {
   // либо ошибку если pathname_from_fs_root
   // не существует
   fn create_file(&mut self, pathname: &str)
+    -> Result<VINode, Errno>;
+
+  fn create_dir(&mut self, pathname: &str)
     -> Result<VINode, Errno>;
 
   fn read_file(&mut self, pathname: &str, count: AddressSize)
@@ -364,7 +397,7 @@ impl Filesystem for VFS {
 pub struct FileDescription {
   pub vinode: VINode,
   pub flags: OpenFlags,
-  pub pathname: String,
+  pub pathname: Option<String>,
 }
 impl FileDescription {
   // pub fn new() {

@@ -1,9 +1,9 @@
 use std::fmt;
 
-use super::{fs::{Filesystem, AddressSize}, virtfs::VirtFsFilesystem};
+use super::{fs::{Filesystem, AddressSize}, virtfs::VirtFsFilesystem, kernel::Args};
 
 #[derive(Debug, Clone)]
-struct Binary(fn(Vec<String>) -> AddressSize);
+struct Binary(fn(Args) -> AddressSize);
 
 impl fmt::Display for Binary {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -11,7 +11,7 @@ impl fmt::Display for Binary {
   }
 }
 
-fn default_binary(_: Vec<String>) -> AddressSize {
+fn default_binary(_: Args) -> AddressSize {
   0
 }
 
@@ -75,6 +75,11 @@ impl Filesystem for BinFilesytem {
 
   fn as_any(&mut self) -> &mut dyn std::any::Any {
     self
+  }
+
+  fn create_dir(&mut self, pathname: &str)
+    -> Result<super::fs::VINode, super::kernel::Errno> {
+    self.virtfs.create_dir()
   }
 }
 
