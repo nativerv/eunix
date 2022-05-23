@@ -1,15 +1,93 @@
+// use std::{fmt, collections::BTreeMap};
+//
+// use super::{fs::{Filesystem, AddressSize}, kernel::Args};
+//
+// #[derive(Debug, Clone)]
+// struct Binary(fn(Args) -> AddressSize);
+//
+// impl fmt::Display for Binary {
+//   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//       write!(f, "{:?}", self)
+//   }
+// }
+//
+// fn default_binary(_: Args) -> AddressSize {
+//   0
+// }
+//
+// impl Default for Binary {
+//   fn default() -> Self {
+//     Self(default_binary)
+//   }
+// }
+//
+// pub struct BinFilesytem {
+//   paths: BTreeMap<String, Binary>
+// }
+//
+// impl Filesystem for BinFilesytem {
+//   fn create_file(&mut self, pathname: &str)
+//   -> Result<super::fs::VINode, super::kernel::Errno> {
+//       todo!()
+//   }
+//
+//   fn create_dir(&mut self, pathname: &str)
+//   -> Result<super::fs::VINode, super::kernel::Errno> {
+//       todo!()
+//   }
+//
+//   fn read_file(&mut self, pathname: &str, count: AddressSize)
+//   -> Result<Vec<u8>, super::kernel::Errno> {
+//       todo!()
+//   }
+//
+//   fn write_file(&mut self, pathname: &str, data: &[u8])
+//   -> Result<super::fs::VINode, super::kernel::Errno> {
+//       todo!()
+//   }
+//
+//   fn read_dir(&mut self, pathname: &str)
+//   -> Result<super::fs::VDirectory, super::kernel::Errno> {
+//       todo!()
+//   }
+//
+//   fn stat(&mut self, pathname: &str)
+//   -> Result<super::fs::FileStat, super::kernel::Errno> {
+//       todo!()
+//   }
+//
+//   fn change_mode(&mut self, pathname: &str, mode: super::fs::FileMode)
+//   -> Result<(), super::kernel::Errno> {
+//       todo!()
+//   }
+//
+//   fn lookup_path(&mut self, pathname: &str)
+//   -> Result<super::fs::VINode, super::kernel::Errno> {
+//       todo!()
+//   }
+//
+//   fn name(&self) -> String {
+//       todo!()
+//   }
+//
+//   fn as_any(&mut self) -> &mut dyn std::any::Any {
+//       todo!()
+//   }
+// }
+
 use std::fmt;
 
 use super::{fs::{Filesystem, AddressSize}, virtfs::VirtFsFilesystem, kernel::Args};
 
 #[derive(Debug, Clone)]
-struct Binary(fn(Args) -> AddressSize);
+pub struct Binary(fn(Args) -> AddressSize);
 
 impl fmt::Display for Binary {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
       write!(f, "{:?}", self)
   }
 }
+
 
 fn default_binary(_: Args) -> AddressSize {
   0
@@ -22,13 +100,13 @@ impl Default for Binary {
 }
 
 pub struct BinFilesytem {
-  virtfs: VirtFsFilesystem<Binary>,
+  pub virtfs: VirtFsFilesystem<Binary>,
 }
 
 impl BinFilesytem {
   pub fn new() -> Self {
-    Self { 
-      virtfs: VirtFsFilesystem::new("binfs"),
+    Self {
+      virtfs: VirtFsFilesystem::new("binfs", 4),
     }
   }
 }
@@ -79,7 +157,7 @@ impl Filesystem for BinFilesytem {
 
   fn create_dir(&mut self, pathname: &str)
     -> Result<super::fs::VINode, super::kernel::Errno> {
-    self.virtfs.create_dir()
+    self.virtfs.create_dir(pathname)
   }
 }
 

@@ -5,7 +5,7 @@ use crate::*;
 use crate::machine::{MachineDeviceTable, VirtualDeviceType};
 use std::collections::BTreeMap;
 
-use super::fs::{AddressSize, OpenFlags,  Filesystem, FilesystemType, VDirectory, Id, VINode};
+use super::fs::{AddressSize, Filesystem, FilesystemType, VDirectory, Id, VINode, FileStat};
 use super::virtfs::VirtFsFilesystem;
 
 pub type Args = Vec<String>;
@@ -13,34 +13,40 @@ pub type Args = Vec<String>;
 #[derive(Debug, PartialEq, Eq)]
 pub enum Errno {
   /// Permission denied
-  EACCES(&'static str),
+  EACCES(String),
   /// Operation not permitted
-  EPERM(&'static str),
+  EPERM(String),
   /// Is a directory
-  EISDIR(&'static str),
+  EISDIR(String),
   /// Not a directory
-  ENOTDIR(&'static str),
+  ENOTDIR(String),
   /// Name too long
-  ENAMETOOLONG(&'static str),
+  ENAMETOOLONG(String),
   /// Not implemented
-  ENOSYS(&'static str),
+  ENOSYS(String),
   /// No such entity
-  ENOENT(&'static str),
+  ENOENT(String),
   /// I/O Error
-  EIO(&'static str),
+  EIO(String),
   /// Invalid argument
-  EINVAL(&'static str),
+  EINVAL(String),
   /// Illegal byte sequence
-  EILSEQ(&'static str),
+  EILSEQ(String),
   /// No such process
-  ESRCH(&'static str),
+  ESRCH(String),
   /// Bad filesystem (not standart)
-  EBADFS(&'static str),
+  EBADFS(String),
+  /// Bad file desctiptor
+  EBADFD(String),
+  /// File exists
+  EEXIST(String),
+  /// No space left on dev
+  ENOSPC(String),
 }
 
 const ROOT_UID: Id = 0;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Process {
   // 0 -> stdin, 1 -> stdout, 2 -> stderr, 3.. -> user-opened
   pub file_descriptors: BTreeMap<FileDescriptor, FileDescription>,
@@ -54,7 +60,7 @@ pub struct Process {
 
 impl Process {
   fn new(bin_pathname: &str, pid: AddressSize) -> Self {
-    let mut process = Self {
+    let process = Self {
       file_descriptors: BTreeMap::new(),
       uid: ROOT_UID,
       ppid: 0,
@@ -103,7 +109,7 @@ pub struct Kernel {
 }
 
 pub struct KernelParams {
-  init: String,
+  pub init: String,
 }
 
 impl Kernel {
@@ -128,11 +134,11 @@ impl Kernel {
     //   .with_pid(init_pid)
     //   .with_uid(ROOT_UID);
       
-    let init_proc = kernel.spawn_process("/bin/init");
+    let init_proc = kernel.spawn_process(init.as_str());
 
     // kernel.exec(init.as_str(), Vec::new());
 
-    todo!()
+    kernel
   }
   pub fn devices(&self) -> &KernelDeviceTable {
     &self.device_table
@@ -151,16 +157,16 @@ impl Kernel {
     self.current_process_id() + 1
   }
 
-  fn open_stdio_files(&self, process: &mut Process) -> Result<(), Errno> {
+  fn open_stdio_files(&mut self, process: &mut Process) -> Result<(), Errno> {
     // Ensure that /proc filesystem exists
-    self.vfs.mount_points.get("/proc").ok_or(Errno::ENOENT("Kernel::open_stdio_files: cannot open stdio files, /proc is not mounted"))?;
+    self.vfs.mount_points.get("/proc").ok_or(Errno::ENOENT(String::from("Kernel::open_stdio_files: cannot open stdio files, /proc is not mounted")))?;
 
     // Identify and create /proc/{pid} and /proc/{pid}/fd,
     // ignoring if already exists
     let process_pathname = format!("/proc/{}", process.pid);
     let process_fd_pathname = format!("{}/fd", process_pathname);
     self.vfs.create_dir(&process_pathname)
-      .and_then(|process| self.vfs.create_dir(&process_fd_pathname));
+      .and_then(|_| self.vfs.create_dir(&process_fd_pathname));
 
     // Create /proc/{pid}/fd/0, /proc/{pid}/fd/1, /proc/{pid}/fd/2
     let stdin_pathname = format!("{}/{}", process_fd_pathname, 0);
@@ -207,7 +213,7 @@ impl Kernel {
       .with_uid(ROOT_UID);
 
     // Insert it to processes table
-    self.processes.insert(self.current_process_id, process);
+    self.processes.insert(self.current_process_id, process.clone());
 
     Ok(process)
   }
@@ -226,14 +232,14 @@ impl Kernel {
   pub fn open(&mut self, pathname: &str, flags: OpenFlags) -> Result<FileDescriptor, Errno> {
     let current_process = self
       .processes
-      .get_mut(self.current_process_id as usize)
-      .ok_or(Errno::ESRCH("open: cannot get current process"))?; 
+      .get_mut(&self.current_process_id)
+      .ok_or(Errno::ESRCH(String::from("open: cannot get current process")))?; 
     
     let vinode = self.vfs.lookup_path(pathname)?;
     let file_description = FileDescription {
       vinode,
       flags,
-      pathname: pathname.to_owned(),
+      pathname: Some(pathname.to_owned()),
     };
 
     current_process.file_descriptors.insert(
@@ -247,8 +253,8 @@ impl Kernel {
 
   pub fn close(&mut self, file_descriptor: FileDescriptor) -> Result<(), Errno> {
     let current_process = self.processes
-      .get_mut(self.current_process_id as usize)
-      .ok_or(Errno::ESRCH("open: cannot get current process"))?; 
+      .get_mut(&self.current_process_id)
+      .ok_or(Errno::ESRCH(String::from("open: cannot get current process")))?; 
     
     current_process.file_descriptors.remove(&file_descriptor);
 
@@ -258,6 +264,9 @@ impl Kernel {
   pub fn read(&self, file_descriptor: FileDescriptor, count: AddressSize) -> Result<Vec<u8>, Errno> {
     todo!();
   }
+  pub fn stat(&self, file_descriptor: FileDescriptor) -> Result<FileStat, Errno> {
+    todo!();
+  }
   pub fn write(&mut self, file_descriptor: FileDescriptor, buffer: Vec<u8>) -> Result<AddressSize, Errno> {
     todo!();
   }
@@ -265,24 +274,31 @@ impl Kernel {
     todo!();
   }
   pub fn getdents(&mut self, file_descriptor: FileDescriptor) -> Result<VDirectory, Errno> {
-    let process = self.processes.get(self.current_process_id() as usize).ok_or(Errno::ESRCH("cannot get current process"))?;
+    let process = self.processes
+      .get(&self.current_process_id())
+      .ok_or(Errno::ESRCH(String::from("cannot get current process")))?;
     let FileDescription {
       vinode: _inode,
       flags,
       pathname,
-    } = process.file_descriptors.get(&file_descriptor).ok_or(Errno::ENOENT("no such file descriptor"))?;
+    } = process.file_descriptors.get(&file_descriptor).ok_or(Errno::ENOENT(String::from("no such file descriptor")))?;
 
     // Guard for OpenMode
     match flags.mode() {
-      OpenMode::Write => return Err(Errno::EACCES("getdents: permission denied")),
+      OpenMode::Write => return Err(Errno::EACCES(String::from("getdents: permission denied"))),
       OpenMode::ReadWrite | OpenMode::Read => (),
     }
 
-    self.vfs.read_dir(pathname)
+    self.vfs.read_dir(
+      pathname
+        .as_ref()
+        .ok_or(Errno::EIO(String::from("this error shouldn't happen as far as i see")))?
+        .as_str()
+    )
   }
   pub fn mount(&mut self, source: &str, target: &str, fs_type: FilesystemType) -> Result<(), Errno> {
     if let Some(_) = self.vfs.mount_points.get(target) {
-      return Err(Errno::EINVAL("mount point already taken"))
+      return Err(Errno::EINVAL(String::from("mount point already taken")))
     }
 
     let mounted_fs = match fs_type {
@@ -298,7 +314,7 @@ impl Kernel {
 
           devfs.device_by_path(&internal_path)?
         } else {
-          return Err(Errno::EINVAL("source is not a device"));
+          return Err(Errno::EINVAL(String::from("source is not a device")));
         };
 
         // Instantiate new e5fs around device that we've found
@@ -333,7 +349,7 @@ impl Kernel {
     Ok(())
   }
   pub fn umount(&mut self, target: &str) -> Result<(), Errno> {
-    self.vfs.mount_points.remove(target).ok_or(Errno::ENOENT("no such mount point"))?;
+    self.vfs.mount_points.remove(target).ok_or(Errno::ENOENT(String::from("no such mount point")))?;
 
     Ok(())
   }

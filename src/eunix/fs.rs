@@ -53,9 +53,11 @@ pub enum FileModeType {
   Char = 0b100,
 }
 
+/// Default is user read-write only.
 impl Default for FileMode {
   fn default() -> Self {
-      Self(0b0_000_000_110_000_000)
+      // NOTICE: 1 f bit may be wrong
+      Self(0b1_000_000_110_000_000)
   }
 }
 
@@ -164,6 +166,7 @@ impl std::ops::Add for FileMode {
 
 pub type FileDescriptor = AddressSize;
 
+#[derive(Debug)]
 pub struct FileStat {
   pub mode: FileMode,
   pub size: AddressSize,
@@ -324,16 +327,23 @@ impl Debug for dyn Filesystem {
 }
 
 impl Filesystem for VFS {
-  fn as_any(&mut self) -> &mut dyn Any {
-    self
-  }
-
   fn create_file(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::create_file: we know that mount_point exist");  
     mounted_fs.driver.create_file(&internal_pathname)
   }
+
+  fn create_dir(&mut self, pathname: &str)
+    -> Result<VINode, Errno> {
+      let vinode = self.create_file(pathname)?;
+      let stat = self.stat(pathname)?;
+      
+      // Should be fine at that point?
+      self.change_mode(pathname, stat.mode.with_type(FileModeType::Dir as u8));
+
+      Ok(vinode)
+    }
 
   fn read_file(&mut self, pathname: &str, _count: AddressSize)
     -> Result<Vec<u8>, Errno> {
@@ -357,7 +367,7 @@ impl Filesystem for VFS {
     // Guard for Not a directory
     match mounted_fs.driver.stat(&internal_pathname)? {
       stat if stat.mode.r#type() != FileModeType::Dir as u8 
-        => return Err(Errno::ENOTDIR("read_dir: not a directory")),
+        => return Err(Errno::ENOTDIR(String::from("read_dir: not a directory"))),
       _ => (),
     }
 
@@ -390,6 +400,10 @@ impl Filesystem for VFS {
 
   fn name(&self) -> String {
     String::from("vfs")
+  }
+
+fn as_any(&mut self) -> &mut dyn Any {
+    self
   }
 }
 
@@ -445,7 +459,7 @@ impl VFS {
   }
 
   pub fn remove_open_file(&mut self, pathname: &str, file_description: &FileDescription) -> Result<(), Errno> {
-    self.open_files.remove(pathname).ok_or_else(|| Errno::ENOENT("vfs: no such file was open")).map(|_| ())
+    self.open_files.remove(pathname).ok_or_else(|| Errno::ENOENT(String::from("vfs: no such file was open"))).map(|_| ())
   }
 
   pub fn match_mount_point(&self, pathname: &str)
@@ -459,7 +473,7 @@ impl VFS {
         let re = Regex::new(&format!("^{}", mount_point)).unwrap();
         re.is_match(pathname).expect("fix yo regex nerd (is_match)")
       })
-      .ok_or_else(|| Errno::ENOENT("VFS::lookup_path: no such file or directory"))?;
+      .ok_or_else(|| Errno::ENOENT(String::from("VFS::lookup_path: no such file or directory")))?;
 
     let regex = Regex::new(&format!("^{}", mount_point))
       .expect("VFS::match_mount_point: regex can't be invalid because of regex::escape");
@@ -479,12 +493,12 @@ impl VFS {
     // Guard for empty `pathname`
     match &pathname {
       pathname if pathname.chars().count() == 0 => { 
-        return Err(Errno::EINVAL("fs::split_path: zero-length path"))
+        return Err(Errno::EINVAL(String::from("fs::split_path: zero-length path")))
       },
       pathname if pathname
         .chars()
         .nth(0)
-        .unwrap() != '/' => return Err(Errno::EINVAL("e5fs.lookup_path: path must start with '/'")),
+        .unwrap() != '/' => return Err(Errno::EINVAL(String::from("e5fs.lookup_path: path must start with '/'"))),
       _ => (),
     };
 
@@ -600,35 +614,35 @@ mod vfs_split_path_tests {
   #[test]
   fn split_path_zero_length() {
     match VFS::split_path("") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL("e5fs.lookup_path: zero-length path")),
+      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("e5fs.lookup_path: zero-length path"))),
       _ => unreachable!(),
     };
   }
   #[test]
   fn split_path_invalid_1() {
     match VFS::split_path("test1") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL("e5fs.lookup_path: path must start with '/'")),
+      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("e5fs.lookup_path: path must start with '/'"))),
       _ => unreachable!(),
     };
   }
   #[test]
   fn split_path_invalid_1_trailing() {
     match VFS::split_path("test1/") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL("e5fs.lookup_path: path must start with '/'")),
+      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("e5fs.lookup_path: path must start with '/'"))),
       _ => unreachable!(),
     };
   }
   #[test]
   fn split_path_invalid_2() {
     match VFS::split_path("test1/test2") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL("e5fs.lookup_path: path must start with '/'")),
+      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("e5fs.lookup_path: path must start with '/'"))),
       _ => unreachable!(),
     };
   }
   #[test]
   fn split_path_invalid_3() {
     match VFS::split_path("test1/test2/test3") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL("e5fs.lookup_path: path must start with '/'")),
+      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("e5fs.lookup_path: path must start with '/'"))),
       _ => unreachable!(),
     };
   }

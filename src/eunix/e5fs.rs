@@ -48,7 +48,7 @@ impl DirectoryEntry {
     Ok(Self {
       inode_number,
       rec_len: (size_of::<AddressSize>() + size_of::<u16>() + size_of::<u8>() + name.len()) as u16,
-      name_len: name.len().try_into().or_else(|_| Err(Errno::ENAMETOOLONG("DirectoryEntry::new: name can't be bigger than 255")))?,
+      name_len: name.len().try_into().or_else(|_| Err(Errno::ENAMETOOLONG(String::from("DirectoryEntry::new: name can't be bigger than 255"))))?,
       name: name.to_owned(),
     })
   }
@@ -90,7 +90,7 @@ impl Directory {
     Ok(())
   }
   pub fn remove(&mut self, name: &str) -> Result<(), Errno> {
-    self.entries.remove(name).ok_or(Errno::ENOENT("no such file in directory"))?;
+    self.entries.remove(name).ok_or(Errno::ENOENT(String::from("no such file in directory")))?;
     self.entries_count -= 1;
     Ok(())
   }
@@ -358,10 +358,6 @@ pub struct E5FSFilesystem {
 }
 
 impl Filesystem for E5FSFilesystem {
-  fn as_any(&mut self) -> &mut dyn Any {
-    self
-  }
-
   fn create_file(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
     // Regex matching final_component of path (+ leading slash)
@@ -383,7 +379,7 @@ impl Filesystem for E5FSFilesystem {
       .iter()
       .find(|(name, _entry)| format!("/{}", name) == dirent_name)
     {
-       return Err(Errno::EINVAL("file already exists"));
+       return Err(Errno::EINVAL(String::from("file already exists")));
     }
 
     // Allocate inode
@@ -396,7 +392,12 @@ impl Filesystem for E5FSFilesystem {
     self.write_dir(&dir, dir_inode.number)?;
 
     Ok(inode.into())
-  } 
+  }
+
+  fn create_dir(&mut self, pathname: &str)
+    -> Result<VINode, Errno> {
+        todo!()
+    } 
 
   fn read_file(&mut self, pathname: &str, _count: AddressSize)
     -> Result<Vec<u8>, Errno> {
@@ -473,7 +474,7 @@ impl Filesystem for E5FSFilesystem {
       // TODO: pass inode to read_dir_from_inode
       while everything_else.len() > 0 {
         if !is_dir(inode.into()) {
-          return Err(Errno::ENOTDIR("e5fs.lookup_path: not a directory (find_dir)"))
+          return Err(Errno::ENOTDIR(String::from("e5fs.lookup_path: not a directory (find_dir)")))
         }
 
         let piece = everything_else.pop_front().unwrap();
@@ -481,7 +482,7 @@ impl Filesystem for E5FSFilesystem {
         if let Some(entry) = dir.entries.get(&piece.to_owned()) {
           inode = e5fs.read_inode(entry.inode_number);
         } else {
-          return Err(Errno::ENOENT("e5fs.lookup_path: no such file or directory"))
+          return Err(Errno::ENOENT(String::from("e5fs.lookup_path: no such file or directory")))
         }
       }
 
@@ -498,11 +499,15 @@ impl Filesystem for E5FSFilesystem {
       .get(&final_component)
       // Read its inode_number
       .map(|entry| self.read_inode(entry.inode_number).into())
-      .ok_or_else(|| Errno::ENOENT("e5fs.lookup_path: no such file or directory (get(final_component))"))
+      .ok_or_else(|| Errno::ENOENT(String::from("e5fs.lookup_path: no such file or directory (get(final_component))")))
   } 
 
   fn name(&self) -> String { 
     String::from("e5fs")
+  }
+
+fn as_any(&mut self) -> &mut dyn Any {
+    self
   } 
 }
 
@@ -572,8 +577,8 @@ impl E5FSFilesystem {
 
     // Write them to one `Vec`
     let mut data = Vec::new();
-    data.write(&entries_count_bytes).or_else(|_| Err(Errno::EIO("write_dir: can't write entries_count_bytes to data")))?;
-    data.write(&entries_bytes).or_else(|_| Err(Errno::EIO("write_dir: can't write entries_bytes to data")))?;
+    data.write(&entries_count_bytes).or_else(|_| Err(Errno::EIO(String::from("write_dir: can't write entries_count_bytes to data"))))?;
+    data.write(&entries_bytes).or_else(|_| Err(Errno::EIO(String::from("write_dir: can't write entries_bytes to data"))))?;
 
     // Write `Vec` to file
     let new_inode = self.write_to_file(data, inode_number, false)?;
@@ -763,7 +768,7 @@ impl E5FSFilesystem {
 
     // 2. Then see if we actually have at least one such chunk
     let free_block_numbers = match maybe_free_block_numbers {
-      None => return Err(Errno::ENOENT("no fbl chunk with free block number != NO_ADDRESS (unclaimed slot)")),
+      None => return Err(Errno::ENOENT(String::from("no fbl chunk with free block number != NO_ADDRESS (unclaimed slot)"))),
       Some(free_block_numbers) => free_block_numbers,
     };
     
@@ -793,7 +798,7 @@ impl E5FSFilesystem {
 
     // 2. Then see if we actually have at least one such chunk
     let free_block_numbers = match maybe_free_block_numbers {
-      None => return Err(Errno::ENOENT("no fbl chunk with free block number == NO_ADDRESS (claimed slot)")),
+      None => return Err(Errno::ENOENT(String::from("no fbl chunk with free block number == NO_ADDRESS (claimed slot)"))),
       Some(free_block_numbers) => free_block_numbers,
     };
 
@@ -855,14 +860,14 @@ impl E5FSFilesystem {
         Some(slot_index)
       } else {
         None
-      }).ok_or_else(|| Errno::EIO("no more empty block slots in inode"))?;
+      }).ok_or_else(|| Errno::EIO(String::from("no more empty block slots in inode")))?;
 
     let free_slots_count = inode.direct_block_numbers.len() as AddressSize - (empty_slot + 1);
 
     // Guard for not enough empty slots in direct block number array
     // TODO: implement indirect blocks
     match free_slots_count {
-      n if n < blocks_count => return Err(Errno::EIO("not enough empty block slots in inode")),
+      n if n < blocks_count => return Err(Errno::EIO(String::from("not enough empty block slots in inode"))),
       _ => (),
     };
 
@@ -900,14 +905,14 @@ impl E5FSFilesystem {
         Some(slot_index as AddressSize)
       } else {
         None
-      }).ok_or_else(|| Errno::EIO("no block slots used in inode - can't shrink"))?;
+      }).ok_or_else(|| Errno::EIO(String::from("no block slots used in inode - can't shrink")))?;
 
     let used_slots_count = inode.direct_block_numbers.len() as AddressSize - (first_used_slot + 1);
 
     // Guard for not enough used slots in direct block number array
     // TODO: implement indirect blocks
     match used_slots_count {
-      n if blocks_count > n => return Err(Errno::EIO("not enough used slots in inode - can't shrink")),
+      n if blocks_count > n => return Err(Errno::EIO(String::from("not enough used slots in inode - can't shrink"))),
       _ => (),
     };
 
@@ -930,7 +935,7 @@ impl E5FSFilesystem {
   fn write_block(&mut self, block: &Block, block_number: AddressSize) -> Result<(), Errno> {
     // Guard for block_number out of bounds
     if block_number > self.fs_info.blocks_count {
-      return Err(Errno::ENOENT("write_block: block_number out of bounds"))
+      return Err(Errno::ENOENT(String::from("write_block: block_number out of bounds")))
     }
 
     // Read bytes from file
@@ -951,7 +956,7 @@ impl E5FSFilesystem {
   fn write_inode(&mut self, inode: &INode, inode_number: AddressSize) -> Result<(), Errno> {
     // Guard for inoe_number out of bounds
     if inode_number > self.fs_info.inodes_count {
-      return Err(Errno::ENOENT("write_inode: inode_number out of bounds"))
+      return Err(Errno::ENOENT(String::from("write_inode: inode_number out of bounds")))
     }
     
     // Read bytes from file
@@ -1132,15 +1137,15 @@ impl E5FSFilesystem {
     let drain_one_entry = |data: &mut Vec<u8>| -> Result<DirectoryEntry, Errno> {
       let address_size = size_of::<AddressSize>();
 
-      let inode_number = AddressSize::from_le_bytes(data.drain(0..address_size as usize).as_slice().try_into().or_else(|_| Err(Errno::EILSEQ("can't parse inode_number")))?);
-      let rec_len = u16::from_le_bytes(data.drain(0..2).as_slice().try_into().or_else(|_| Err(Errno::EILSEQ("can't parse rec_len")))?);
-      let name_len = u8::from_le_bytes(data.drain(0..1).as_slice().try_into().or_else(|_| Err(Errno::EILSEQ("can't parse name_len")))?);
-      let name: String = String::from_utf8(data.drain(0..name_len as usize).collect()).or_else(|_| Err(Errno::EILSEQ("can't parse name")))?;
+      let inode_number = AddressSize::from_le_bytes(data.drain(0..address_size as usize).as_slice().try_into().or_else(|_| Err(Errno::EILSEQ(String::from("can't parse inode_number"))))?);
+      let rec_len = u16::from_le_bytes(data.drain(0..2).as_slice().try_into().or_else(|_| Err(Errno::EILSEQ(String::from("can't parse rec_len"))))?);
+      let name_len = u8::from_le_bytes(data.drain(0..1).as_slice().try_into().or_else(|_| Err(Errno::EILSEQ(String::from("can't parse name_len"))))?);
+      let name: String = String::from_utf8(data.drain(0..name_len as usize).collect()).or_else(|_| Err(Errno::EILSEQ(String::from("can't parse name"))))?;
 
       if inode_number >= fs_info.inodes_count {
-        return Err(Errno::EILSEQ("parse_directory: drain_one_entry: inode_number out of bounds"));
+        return Err(Errno::EILSEQ(String::from("parse_directory: drain_one_entry: inode_number out of bounds")));
       } else if (rec_len as usize) < (address_size + size_of::<u16>() + size_of::<u8>() + size_of::<u8>()) {
-        return Err(Errno::EILSEQ("parse_directory: drain_one_entry: rec_len is smaller than minimal"));
+        return Err(Errno::EILSEQ(String::from("parse_directory: drain_one_entry: rec_len is smaller than minimal")));
       }
 
       Ok(DirectoryEntry {
@@ -1155,7 +1160,7 @@ impl E5FSFilesystem {
       data.drain(0..size_of::<AddressSize>() as usize)
         .as_slice()
         .try_into()
-        .or_else(|_| Err(Errno::EILSEQ("can't parse entries_count from dir")))?
+        .or_else(|_| Err(Errno::EILSEQ(String::from("can't parse entries_count from dir"))))?
       );
 
     let mut entries = BTreeMap::new();

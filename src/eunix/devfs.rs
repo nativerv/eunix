@@ -143,23 +143,29 @@ impl DeviceFilesystem {
   pub(crate) fn device_by_path(&self, pathname: &str) -> Result<String, Errno> {
     let (_everything_else, final_component) = VFS::split_path(pathname)?;
     let device_names = self.device_names();
-    let realpath = device_names.get(&final_component).ok_or(Errno::ENOENT("no device corresponds to that name"))?;
+    let realpath = device_names.get(&final_component).ok_or(Errno::ENOENT(String::from("no device corresponds to that name")))?;
 
     Ok(realpath.to_owned())
   }
 }
 
 impl Filesystem for DeviceFilesystem {
-  fn as_any(&mut self) -> &mut dyn Any {
-    self
+  fn create_file(&mut self, pathname: &str)
+    -> Result<VINode, Errno> {
+    Err(Errno::EPERM(String::from("operation not permitted")))
   }
 
+  fn create_dir(&mut self, pathname: &str)
+    -> Result<VINode, Errno> {
+        todo!()
+    }
+
   fn read_file(&mut self, pathname: &str, count: AddressSize) -> Result<Vec<u8>, Errno> {
-    Err(Errno::EPERM("devfs read_bytes: permission denied"))
+    Err(Errno::EPERM(String::from("devfs read_bytes: permission denied")))
   }
 
   fn write_file(&mut self, pathname: &str, data: &[u8]) -> Result<VINode, Errno> {
-    Err(Errno::EPERM("devfs write_bytes: permission denied"))
+    Err(Errno::EPERM(String::from("devfs write_bytes: permission denied")))
   }
 
   fn read_dir(&mut self, pathname: &str) -> Result<VDirectory, Errno> {
@@ -170,7 +176,7 @@ impl Filesystem for DeviceFilesystem {
 
     // TODO: FIXME: remove /. when .. and . is implemented 
     if pathname != "/" && pathname != "/." {
-      return Err(Errno::ENOENT("no such file or directory"))
+      return Err(Errno::ENOENT(String::from("no such file or directory")))
     }
 
     Ok(
@@ -184,35 +190,6 @@ impl Filesystem for DeviceFilesystem {
           .collect()
       }
     )
-  }
-
-  // Поиск файла в файловой системе. Возвращает INode фала.
-  // Для VFS сначала матчинг на маунт-поинты и вызов lookup_path("/mount/point") у конкретной файловой системы;
-  // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
-  fn lookup_path(&mut self, pathname: &str) -> Result<VINode, Errno> {
-    let (everything_else, final_component) = VFS::split_path(pathname)?;
-    let dir = self.read_dir("/")?; // TODO: FIXME: magic string
-
-    let inode_number = if final_component == "." {
-      0
-    } else {
-      dir.entries.get(&final_component).ok_or(Errno::ENOENT("no such file or directory 2"))?.inode_number
-    };
-    
-    self.inodes
-      .iter()
-      .find(|inode| inode.number == inode_number)
-      .map(|&inode| inode.into())
-      .ok_or(Errno::EIO("devfs::lookup_path: can't find inode from dir"))
-  }
-
-  fn name(&self) -> String {
-    String::from("devfs")
-  }
-
-  fn create_file(&mut self, pathname: &str)
-    -> Result<VINode, Errno> {
-    Err(Errno::EPERM("operation not permitted"))
   }
 
   fn stat(&mut self, pathname: &str)
@@ -240,7 +217,35 @@ impl Filesystem for DeviceFilesystem {
 
   fn change_mode(&mut self, pathname: &str, mode: super::fs::FileMode)
     -> Result<(), Errno> {
-    Err(Errno::EPERM("operation not permitted"))
+    Err(Errno::EPERM(String::from("operation not permitted")))
+  }
+
+  // Поиск файла в файловой системе. Возвращает INode фала.
+  // Для VFS сначала матчинг на маунт-поинты и вызов lookup_path("/mount/point") у конкретной файловой системы;
+  // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
+  fn lookup_path(&mut self, pathname: &str) -> Result<VINode, Errno> {
+    let (everything_else, final_component) = VFS::split_path(pathname)?;
+    let dir = self.read_dir("/")?; // TODO: FIXME: magic string
+
+    let inode_number = if final_component == "." {
+      0
+    } else {
+      dir.entries.get(&final_component).ok_or(Errno::ENOENT(String::from("no such file or directory 2")))?.inode_number
+    };
+    
+    self.inodes
+      .iter()
+      .find(|inode| inode.number == inode_number)
+      .map(|&inode| inode.into())
+      .ok_or(Errno::EIO(String::from("devfs::lookup_path: can't find inode from dir")))
+  }
+
+  fn name(&self) -> String {
+    String::from("devfs")
+  }
+
+fn as_any(&mut self) -> &mut dyn Any {
+    self
   }
 }
 

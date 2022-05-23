@@ -5,9 +5,10 @@ mod eunix;
 mod machine;
 mod util;
 
+use itertools::Itertools;
 use machine::{Machine, OperatingSystem};
 
-use crate::{eunix::{e5fs::*, fs::{Filesystem, OpenFlags, OpenMode}}, machine::VirtualDeviceType};
+use crate::{eunix::{e5fs::*, fs::{Filesystem, OpenFlags, OpenMode}, kernel::KernelParams, binfs::BinFilesytem}, machine::VirtualDeviceType};
 use std::{
   fs::File,
   io::{Read, Seek, SeekFrom},
@@ -23,7 +24,9 @@ pub fn main() {
       .unwrap()
   );
   let mut os = OperatingSystem {
-    kernel: eunix::kernel::Kernel::new(machine.device_table()),
+    kernel: eunix::kernel::Kernel::new(machine.device_table(), KernelParams {
+      init: String::from("/bin/init"),
+    }),
   };
 
   let (sda1_realpath, _) = machine
@@ -40,30 +43,58 @@ pub fn main() {
   os.kernel.mount("", "/bin", eunix::fs::FilesystemType::binfs).unwrap();
   os.kernel.mount("/dev/sda", "/", eunix::fs::FilesystemType::e5fs).unwrap();
 
-  let fd = os.kernel
-    .open("/test-file.txt", OpenFlags { 
-      mode: OpenMode::ReadWrite, 
-      create: true, 
-      append: true 
-    })
-    .unwrap();
+  let binfs = &mut os.kernel.vfs.mount_points.get_mut("/bin").unwrap().driver;
+  let inodes = &mut binfs.as_any().downcast_mut::<BinFilesytem>().unwrap().virtfs.inodes;
+  // println!("{inodes:#?}");
+  drop(inodes);
+  let payloads = &mut binfs.as_any().downcast_mut::<BinFilesytem>().unwrap().virtfs.payloads;
+  // println!("{payloads:#?}");
+  binfs.create_file("/ls").unwrap();
+  binfs.create_dir("/eblan").unwrap();
+  binfs.create_file("/eblan/ls").unwrap();
+  let stat = binfs.stat("/eblan/ls").unwrap();
+  println!("{stat:?}");
+  // println!("/bin/ls: {stat:?}", stat = os.kernel.vfs.stat("/bin/ls").unwrap());
 
-  os.kernel.close(fd).unwrap();
+  // This panics with lookup_path error of ENOENT (probably should actually `craete` file if create
+  // is set to `true`, eh?)
+  // let fd = os.kernel
+  //   .open("/test-file.txt", OpenFlags { 
+  //     mode: OpenMode::ReadWrite, 
+  //     create: true, 
+  //     append: true 
+  //   })
+  //   .unwrap();
 
-  println!("mount_points: {:#?}", os.kernel.vfs().mount_points);
-  println!("processes: {:#?}", os.kernel.processes());
+  // os.kernel.close(fd).unwrap();
 
-  let mut quit = false;
-  let mut command = String::new();
+  // println!("mount_points: {:#?}", os.kernel.vfs().mount_points);
+  // println!("processes: {:#?}", os.kernel.processes());
+
 
   use std::io::*;
 
-  while !quit {
+  let mut command = String::new();
+  loop {
     command.clear();
     print!("# ");
-    stdout().flush();
-    stdin().read_line(&mut command);
-    println!("{command}");
+    stdout().flush().unwrap();
+    stdin().read_line(&mut command).unwrap();
+    let args = command
+      .trim()
+      .split(' ')
+      .collect::<Vec<&str>>();
+
+    match args[0] {
+      "echo" => {
+        let args = args.iter().skip(1).join(" ");
+        println!("{args}");
+      },
+      "exit" => break,
+      _ => {
+        println!("{command}");
+      }
+    }
   }
 }
 
