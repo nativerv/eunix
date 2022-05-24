@@ -454,12 +454,12 @@ impl Filesystem for E5FSFilesystem {
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
   fn lookup_path(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
-    let pathname = VFS::split_path(pathname)?;
-    let (everything_else, final_component) = pathname.clone();
+    let split_pathname = VFS::split_path(pathname)?;
+    let (everything_else, final_component) = split_pathname.clone();
     let mut inode: INode = self.read_inode(self.fs_info.root_inode_number);
 
     // Base case
-    if pathname == (Vec::new(), String::from("/")) {
+    if split_pathname == (Vec::new(), String::from("/")) {
       let inode = self.read_inode(self.fs_info.root_inode_number);
       return Ok(inode.into());
     };
@@ -559,7 +559,10 @@ impl E5FSFilesystem {
     // 3. Write root dir - first allocated file (inode) 
     //    will always be 0-th inode in inode table
     let (root_inode_number, _) = e5fs.allocate_file()?;
-    e5fs.write_dir(&Directory::new(), root_inode_number)?;
+    let mut root_dir = Directory::new();
+    root_dir.insert(root_inode_number, "..").expect("this should succeed");
+    root_dir.insert(root_inode_number, ".").expect("this should succeed");
+    e5fs.write_dir(&root_dir, root_inode_number)?;
 
     Ok(e5fs)
   }
@@ -581,7 +584,11 @@ impl E5FSFilesystem {
     data.write(&entries_bytes).or_else(|_| Err(Errno::EIO(String::from("write_dir: can't write entries_bytes to data"))))?;
 
     // Write `Vec` to file
-    let new_inode = self.write_to_file(data, inode_number, false)?;
+    let mut new_inode = self.write_to_file(data, inode_number, false)?;
+    new_inode.mode = new_inode.mode.with_type(FileModeType::Dir as u8);
+
+    // Set inode mode to be directory
+    self.write_inode(&new_inode, inode_number)?;
 
     Ok(new_inode)
   }

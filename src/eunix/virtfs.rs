@@ -95,7 +95,7 @@ impl Directory {
 #[derive(Debug, Clone)]
 pub enum Payload<T: VirtFsFile> {
   Directory(Directory),
-  File(Box<T>),
+  File(T),
 }
 
 impl<T: VirtFsFile> fmt::Display for Payload<T> {
@@ -109,7 +109,7 @@ impl<T: VirtFsFile> fmt::Display for Payload<T> {
 
 impl<T: VirtFsFile> Default for Payload<T> {
   fn default() -> Self {
-    Payload::File(Box::new(T::default()))
+    Payload::File(T::default())
   }
 }
 
@@ -282,7 +282,7 @@ impl<T: VirtFsFile> VirtFsFilesystem<T> {
 
     Ok(())
   }
-  fn write_payload(&mut self, payload: &Payload<T>, free_payload_number: u32) -> Result<(), Errno> {
+  pub fn write_payload(&mut self, payload: &Payload<T>, free_payload_number: u32) -> Result<(), Errno> {
     *self
       .payloads
       .get_mut(free_payload_number as usize)
@@ -344,7 +344,7 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
       .read_from_file(inode_number)?;
 
     Ok(
-      format!("{}", file)
+      format!("{file}")
         .as_bytes()
         .to_owned()
     )
@@ -566,6 +566,22 @@ impl<T: VirtFsFile> VirtFsFilesystem<T> {
        .get(inode_number as usize)
        .ok_or(Errno::ENOENT(String::from("virtfs: read_inode: no such file or directory")))?
        .clone()
+     )
+  }
+  pub fn read_payload(&mut self, inode_number: AddressSize) -> Result<Payload<T>, Errno> {
+    Ok(
+      self
+       .inodes
+       .get(inode_number as usize)
+       .and_then(|inode| {
+          self
+           .payloads
+           .get(inode.payload_number as usize)
+       })
+       .ok_or(Errno::ENOENT(format!("virtfs: read_payload: payload does not exist for inode {inode_number}")))?
+       .to_owned()
+       .ok_or(Errno::ENOENT(format!("virtfs: read_payload: payload does not exist for inode {inode_number}")))?
+       .to_owned()
      )
   }
 }

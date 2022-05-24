@@ -75,12 +75,22 @@
 //   }
 // }
 
-use std::fmt;
+use std::{fmt, rc::Rc, borrow::Borrow};
 
-use super::{fs::{Filesystem, AddressSize}, virtfs::VirtFsFilesystem, kernel::Args};
+use super::{fs::{Filesystem, AddressSize}, virtfs::{VirtFsFilesystem, Payload}, kernel::{Args, Kernel, Errno}};
 
-#[derive(Debug, Clone)]
-pub struct Binary(fn(Args) -> AddressSize);
+type BinaryFn = fn(Args, &mut Kernel) -> AddressSize;
+
+#[derive(Clone)]
+pub struct Binary(pub BinaryFn);
+
+impl fmt::Debug for Binary {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+      // let fun = self.0 as ;
+      let fun: fn(_, &'static mut _) -> _ = self.0;
+      write!(f, "{:?}", fun)
+  }
+}
 
 impl fmt::Display for Binary {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -89,7 +99,7 @@ impl fmt::Display for Binary {
 }
 
 
-fn default_binary(_: Args) -> AddressSize {
+fn default_binary(_: Args, _: &mut Kernel) -> AddressSize {
   0
 }
 
@@ -109,6 +119,25 @@ impl BinFilesytem {
       virtfs: VirtFsFilesystem::new("binfs", 4),
     }
   }
+  pub fn write_binary(&mut self, pathname: &str, binary_fn: BinaryFn)
+    -> Result<super::fs::VINode, super::kernel::Errno> {
+      let vinode = self.lookup_path(pathname)?;
+      self.virtfs.write_payload(&Payload::File(Binary(binary_fn)), vinode.number)?;
+
+      Ok(vinode)
+  }
+  // pub fn exec_binary(&mut self, pathname: &str, kernel: &mut Kernel)
+  //   -> Result<AddressSize, super::kernel::Errno> {
+  //     let vinode = self.lookup_path(pathname)?;
+  //
+  //     let binary = match self.virtfs.read_payload(vinode.number) {
+  //         Ok(Payload::File(binary)) => binary.0(),
+  //         Ok(Payload::Directory(_)) => return Err(Errno::EISDIR(format!("binfs: is a directory: {pathname}"))),
+  //         Err(errno) => return Err(errno),
+  //     }
+  //
+  //     Ok(vinode)
+  //   }
 }
 
 impl Filesystem for BinFilesytem {

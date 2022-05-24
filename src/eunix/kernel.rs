@@ -6,7 +6,7 @@ use crate::machine::{MachineDeviceTable, VirtualDeviceType};
 use std::collections::BTreeMap;
 
 use super::fs::{AddressSize, Filesystem, FilesystemType, VDirectory, Id, VINode, FileStat};
-use super::virtfs::VirtFsFilesystem;
+use super::virtfs::{VirtFsFilesystem, Payload};
 
 pub type Args = Vec<String>;
 
@@ -44,6 +44,7 @@ pub enum Errno {
   ENOSPC(String),
 }
 
+pub static KERNEL_MESSAGE_HEADER_ERR: &'static str = "\x1b[93mkernel\x1b[0m";
 const ROOT_UID: Id = 0;
 
 #[derive(Debug, Clone)]
@@ -217,6 +218,7 @@ impl Kernel {
 
     Ok(process)
   }
+
 }
 
 impl Kernel {
@@ -226,8 +228,46 @@ impl Kernel {
 }
 
 impl Kernel {
-  fn exec(&self, pathname: &str, argv: Args) -> Result<AddressSize, Errno> {
-      todo!()
+  pub fn exec(&mut self, pathname: &str, argv: &[&str]) -> Result<AddressSize, Errno> {
+    let (mount_point, internal_pathname) = self.vfs.match_mount_point(pathname)?;
+
+    println!("mount_point: {mount_point}");
+    println!("internal_pathname: {internal_pathname}");
+
+    match self
+      .vfs
+      .mount_points
+      .get_mut(mount_point.as_str())
+      .expect(&format!("[{KERNEL_MESSAGE_HEADER_ERR}]: critical: we know that mount_point {mount_point} exists"))
+    {
+      MountedFilesystem { r#type: FilesystemType::binfs, driver } => {
+        let binfs = driver
+          .as_any()
+          .downcast_mut::<BinFilesytem>()
+          .expect(
+            &format!("[{KERNEL_MESSAGE_HEADER_ERR}]: critical: we know that driver is of type 'binfs'")
+          );
+
+        // Lookup for binary file
+        let vinode = binfs.lookup_path(&internal_pathname)?;
+        // Try to read it's payload and get binary out of it
+        let binary = match binfs.virtfs.read_payload(vinode.number) {
+            Ok(Payload::File(binary)) => binary,
+            Ok(Payload::Directory(_)) => return Err(Errno::EISDIR(format!("exec: is a directory: {pathname}"))),
+            Err(errno) => return Err(errno),
+        };
+
+        // Convert &[&str] -> Vec<String>
+        let argv = argv.iter().map(|arg| arg.to_string()).to_owned().collect();
+
+        let exit_code = binary.0(argv, self);
+
+        Ok(exit_code)
+      },
+      _ => {
+        Err(Errno::EACCES(format!("exec: filesystem {mount_point} is noexec")))
+      },
+    }
   }
   pub fn open(&mut self, pathname: &str, flags: OpenFlags) -> Result<FileDescriptor, Errno> {
     let current_process = self
