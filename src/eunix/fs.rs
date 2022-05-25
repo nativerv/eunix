@@ -1,12 +1,12 @@
 use std::{collections::BTreeMap, any::Any};
-use core::fmt::Debug;
+use core::fmt::{Debug, self};
 
 use fancy_regex::Regex;
 use itertools::Itertools;
 
 use crate::util::{fixedpoint, unixtime};
 
-use super::kernel::Errno;
+use super::kernel::{Errno, UnixtimeSize};
 
 pub type AddressSize = u32;
 pub type Id = u16;
@@ -51,6 +51,18 @@ pub enum FileModeType {
   Sys = 0b010,
   Block = 0b011,
   Char = 0b100,
+}
+
+impl fmt::Display for FileModeType {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      FileModeType::File => write!(f, "file"),
+      FileModeType::Dir => write!(f, "directory"),
+      FileModeType::Sys => write!(f, "system special"),
+      FileModeType::Block => write!(f, "block device"),
+      FileModeType::Char => write!(f, "character special"),
+    }
+  }
 }
 
 /// From raw u8's: 0b000 -> File etc
@@ -215,6 +227,10 @@ pub struct FileStat {
   pub uid: u16,
   pub gid: u16,
   pub block_size: AddressSize,
+  pub atime: UnixtimeSize,
+  pub mtime: UnixtimeSize,
+  pub ctime: UnixtimeSize,
+  pub btime: UnixtimeSize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -290,14 +306,25 @@ impl VDirectoryEntry {
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
 pub struct VINode {
+  /// File mode
   pub mode: FileMode,
+  /// Links count (how many times inode listed in directories)
   pub links_count: AddressSize,
+  /// User owner
   pub uid: Id,
+  /// Group owner
   pub gid: Id,
+  /// File size (in bytes, i guess)
   pub file_size: AddressSize,
-  pub atime: u32,
-  pub mtime: u32,
-  pub ctime: u32,
+  /// Last access time
+  pub atime: UnixtimeSize,
+  /// Last contents change time
+  pub mtime: UnixtimeSize,
+  /// Last inode change time
+  pub ctime: UnixtimeSize,
+  /// Birth (creation) time (non-standard)
+  pub btime: UnixtimeSize,
+  /// Inode number 
   pub number: AddressSize,
 }
 
@@ -318,6 +345,7 @@ impl VINode {
       atime: unixtime(),
       mtime: unixtime(),
       ctime: unixtime(),
+      btime: unixtime(),
       number: 0,
     }
   }
@@ -341,10 +369,10 @@ pub trait Filesystem {
   fn write_file(&mut self, pathname: &str, data: &[u8])
     -> Result<VINode, Errno>;
 
-  fn read_dir(&mut self, pathname: &str)
+  fn read_dir(&self, pathname: &str)
     -> Result<VDirectory, Errno>;
 
-  fn stat(&mut self, pathname: &str)
+  fn stat(&self, pathname: &str)
     -> Result<FileStat, Errno>;
 
   fn change_mode(&mut self, pathname: &str, mode: FileMode)
@@ -353,7 +381,7 @@ pub trait Filesystem {
   // Поиск файла в файловой системе. Возвращает INode фала.
   // Для VFS сначала матчинг на маунт-поинты и вызов lookup_path("/mount/point") у конкретной файловой системы;
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
-  fn lookup_path(&mut self, pathname: &str)
+  fn lookup_path(&self, pathname: &str)
     -> Result<VINode, Errno>;
 
   fn name(&self) -> String;
@@ -399,10 +427,10 @@ impl Filesystem for VFS {
     mounted_fs.driver.write_file(&internal_pathname, data)
   }
 
-  fn read_dir(&mut self, pathname: &str)
+  fn read_dir(&self, pathname: &str)
     -> Result<VDirectory, Errno> {
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
-    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::read_dir: we know that mount_point exist");  
+    let mounted_fs = self.mount_points.get(&mount_point).expect("VFS::read_dir: we know that mount_point exist");  
 
     // Guard for Not a directory
     match mounted_fs.driver.stat(&internal_pathname)? {
@@ -414,10 +442,10 @@ impl Filesystem for VFS {
     mounted_fs.driver.read_dir(&internal_pathname)
   }
 
-  fn stat(&mut self, pathname: &str)
+  fn stat(&self, pathname: &str)
     -> Result<FileStat, Errno> {
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
-    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::stat: we know that mount_point exist");  
+    let mounted_fs = self.mount_points.get(&mount_point).expect("VFS::stat: we know that mount_point exist");  
     mounted_fs.driver.stat(&internal_pathname)
   }
 
@@ -431,10 +459,10 @@ impl Filesystem for VFS {
   // Поиск файла в файловой системе. Возвращает INode фала.
   // Для VFS сначала матчит на маунт-поинты и вызывает lookup_path("/internal/path") у конкретной файловой системы;
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
-  fn lookup_path(&mut self, pathname: &str)
+  fn lookup_path(&self, pathname: &str)
     -> Result<VINode, Errno> {
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
-    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::lookup_path: we know that mount_point exist");  
+    let mounted_fs = self.mount_points.get(&mount_point).expect("VFS::lookup_path: we know that mount_point exist");  
     mounted_fs.driver.lookup_path(&internal_pathname)
   }
 
@@ -540,7 +568,7 @@ impl VFS {
       pathname if pathname
         .chars()
         .nth(0)
-        .unwrap() != '/' => return Err(Errno::EINVAL(String::from("e5fs.lookup_path: path must start with '/'"))),
+        .unwrap() != '/' => return Err(Errno::EINVAL(String::from("fs::split_path: path must start with '/'"))),
       _ => (),
     };
 
@@ -576,7 +604,7 @@ impl VFS {
     let final_component: String = pathname
       .split('/')
       .last()
-      .expect("e5fs.split_path: we know that there is element").to_owned();
+      .expect("fs::split_path: we know that there is element").to_owned();
 
     match pathname.split('/').count() {
       // E.g. with '/test1' we have vec!["", "test1"]
@@ -656,35 +684,35 @@ mod vfs_split_path_tests {
   #[test]
   fn split_path_zero_length() {
     match VFS::split_path("") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("e5fs.lookup_path: zero-length path"))),
+      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("fs::split_path: zero-length path"))),
       _ => unreachable!(),
     };
   }
   #[test]
   fn split_path_invalid_1() {
     match VFS::split_path("test1") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("e5fs.lookup_path: path must start with '/'"))),
+      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("fs::split_path: path must start with '/'"))),
       _ => unreachable!(),
     };
   }
   #[test]
   fn split_path_invalid_1_trailing() {
     match VFS::split_path("test1/") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("e5fs.lookup_path: path must start with '/'"))),
+      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("fs::split_path: path must start with '/'"))),
       _ => unreachable!(),
     };
   }
   #[test]
   fn split_path_invalid_2() {
     match VFS::split_path("test1/test2") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("e5fs.lookup_path: path must start with '/'"))),
+      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("fs::split_path: path must start with '/'"))),
       _ => unreachable!(),
     };
   }
   #[test]
   fn split_path_invalid_3() {
     match VFS::split_path("test1/test2/test3") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("e5fs.lookup_path: path must start with '/'"))),
+      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("fs::split_path: path must start with '/'"))),
       _ => unreachable!(),
     };
   }

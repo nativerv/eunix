@@ -1,7 +1,7 @@
 use crate::eunix::devfs::DeviceFilesystem;
 use crate::eunix::binfs::BinFilesytem;
 use crate::eunix::fs::{FileDescription, FileDescriptor, VFS, OpenMode, MountedFilesystem, OpenFlags};
-use crate::*;
+use crate::eunix;
 use crate::machine::{MachineDeviceTable, VirtualDeviceType};
 use std::collections::BTreeMap;
 
@@ -9,6 +9,7 @@ use super::fs::{AddressSize, Filesystem, FilesystemType, VDirectory, Id, VINode,
 use super::virtfs::{VirtFsFilesystem, Payload};
 
 pub type Args = Vec<String>;
+pub type UnixtimeSize = u64;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Errno {
@@ -230,9 +231,8 @@ impl Kernel {
 impl Kernel {
   pub fn exec(&mut self, pathname: &str, argv: &[&str]) -> Result<AddressSize, Errno> {
     let (mount_point, internal_pathname) = self.vfs.match_mount_point(pathname)?;
-
-    println!("mount_point: {mount_point}");
-    println!("internal_pathname: {internal_pathname}");
+    println!("[{KERNEL_MESSAGE_HEADER_ERR}]: mount_point: {mount_point}");
+    println!("[{KERNEL_MESSAGE_HEADER_ERR}]: internal_pathname: {internal_pathname}");
 
     match self
       .vfs

@@ -8,7 +8,7 @@ use crate::eunix::fs::Filesystem;
 use crate::util::unixtime;
 
 use super::fs::{AddressSize, VDirectoryEntry, VINode, VDirectory, VFS, FileMode, FileStat, FileModeType};
-use super::kernel::{Errno, KernelDeviceTable};
+use super::kernel::{Errno, KernelDeviceTable, UnixtimeSize};
 
 pub struct DirectoryEntry<'a> {
   inode_address: AddressSize,
@@ -23,9 +23,10 @@ pub struct INode {
   uid: u16,
   gid: u16,
   file_size: AddressSize,
-  atime: u32,
-  mtime: u32,
-  ctime: u32,
+  atime: UnixtimeSize,
+  mtime: UnixtimeSize,
+  ctime: UnixtimeSize,
+  btime: UnixtimeSize,
   number: AddressSize,
 }
 impl From<INode> for VINode {
@@ -39,6 +40,7 @@ impl From<INode> for VINode {
       atime: inode.atime,
       ctime: inode.ctime,
       mtime: inode.mtime,
+      btime: inode.btime,
       number: inode.number,
     }
   }
@@ -103,6 +105,7 @@ impl DeviceFilesystem {
         atime: unixtime(),
         mtime: unixtime(),
         ctime: unixtime(), 
+        btime: unixtime(), 
         number: device_number as AddressSize + 1,
       }).collect::<Vec<INode>>();
 
@@ -168,7 +171,7 @@ impl Filesystem for DeviceFilesystem {
     Err(Errno::EPERM(String::from("devfs write_bytes: permission denied")))
   }
 
-  fn read_dir(&mut self, pathname: &str) -> Result<VDirectory, Errno> {
+  fn read_dir(&self, pathname: &str) -> Result<VDirectory, Errno> {
     let mut tty_devices_count = 0;
     let mut block_devices_count = 0;
 
@@ -192,7 +195,7 @@ impl Filesystem for DeviceFilesystem {
     )
   }
 
-  fn stat(&mut self, pathname: &str)
+  fn stat(&self, pathname: &str)
     -> Result<super::fs::FileStat, Errno> {
     let VINode {
       mode,
@@ -201,6 +204,10 @@ impl Filesystem for DeviceFilesystem {
       uid,
       gid,
       number,
+      atime,
+      mtime,
+      ctime,
+      btime,
       ..
     } = self.lookup_path(pathname)?; 
 
@@ -212,6 +219,10 @@ impl Filesystem for DeviceFilesystem {
       uid,
       gid,
       block_size: 0, // TODO: FIXME: magic number
+      atime,
+      mtime,
+      ctime, 
+      btime, 
     })
   }
 
@@ -223,7 +234,7 @@ impl Filesystem for DeviceFilesystem {
   // Поиск файла в файловой системе. Возвращает INode фала.
   // Для VFS сначала матчинг на маунт-поинты и вызов lookup_path("/mount/point") у конкретной файловой системы;
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
-  fn lookup_path(&mut self, pathname: &str) -> Result<VINode, Errno> {
+  fn lookup_path(&self, pathname: &str) -> Result<VINode, Errno> {
     let (everything_else, final_component) = VFS::split_path(pathname)?;
     let dir = self.read_dir("/")?; // TODO: FIXME: magic string
 

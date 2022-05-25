@@ -12,6 +12,7 @@ use std::slice::SliceIndex;
 
 use crate::eunix::fs::FileModeType;
 use crate::eunix::fs::NOBODY;
+use crate::eunix::kernel::KERNEL_MESSAGE_HEADER_ERR;
 // use crate::util::fixedpoint;
 // use crate::util::unixtime;
 
@@ -26,6 +27,7 @@ use super::fs::VDirectoryEntry;
 use super::fs::VINode;
 use super::fs::VFS;
 use super::kernel::Errno;
+use super::kernel::UnixtimeSize;
 
 pub trait VirtFsFile = Clone + Default + fmt::Display;
 
@@ -120,9 +122,10 @@ pub struct INode {
   uid: Id,
   gid: Id,
   file_size: AddressSize,
-  atime: u32,
-  mtime: u32,
-  ctime: u32,
+  atime: UnixtimeSize,
+  mtime: UnixtimeSize,
+  ctime: UnixtimeSize,
+  btime: UnixtimeSize,
   payload_number: AddressSize,
   number: AddressSize,
 }
@@ -144,6 +147,7 @@ impl Default for INode {
       atime: 0,
       mtime: 0,
       ctime: 0,
+      btime: 0,
       payload_number: NO_ADDRESS,
       number: 0,
     }
@@ -161,6 +165,7 @@ impl From<INode> for VINode {
       atime: inode.atime,
       ctime: inode.ctime,
       mtime: inode.mtime,
+      btime: inode.btime,
       number: inode.number,
     }
   }
@@ -355,7 +360,7 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
       todo!("Accept callbacks for read and write from the instantiator")
   } 
 
-  fn read_dir(&mut self, pathname: &str)
+  fn read_dir(&self, pathname: &str)
     -> Result<VDirectory, Errno> {
     let inode_number = self.lookup_path(pathname)?.number;
     let dir = self.read_dir_from_inode(inode_number)?;
@@ -363,7 +368,7 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
     Ok(dir.into())
   }
 
-  fn stat(&mut self, pathname: &str) 
+  fn stat(&self, pathname: &str) 
     -> Result<FileStat, Errno> {
     let inode_number = self.lookup_path(pathname)?.number;
     let INode {
@@ -372,6 +377,10 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
       links_count,
       uid,
       gid,
+      atime,
+      mtime,
+      ctime,
+      btime,
       ..
     } = self.read_inode(inode_number)?;
 
@@ -382,7 +391,11 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
       links_count,
       uid,
       gid,
-      block_size: 0
+      block_size: 0,
+      atime,
+      mtime,
+      ctime,
+      btime,
     })
   }
 
@@ -395,7 +408,7 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
   // Поиск файла в файловой системе. Возвращает INode фала.
   // Для VFS сначала матчинг на маунт-поинты и вызов lookup_path("/mount/point") у конкретной файловой системы;
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
-  fn lookup_path(&mut self, pathname: &str)
+  fn lookup_path(&self, pathname: &str)
     -> Result<VINode, Errno> {
     let pathname = VFS::split_path(pathname)?;
     let (everything_else, final_component) = pathname.clone();
@@ -414,7 +427,7 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
     }
 
     // TODO: add 'blocks' vector to the VirtFsFilesystem: Vec<T>, indexed by inodes with payload_index
-    fn find_dir<T: VirtFsFile>(virtfs: &mut VirtFsFilesystem<T>, everything_else: Vec<String>, initial_inode: &INode) -> Result<INode, Errno> {
+    fn find_dir<T: VirtFsFile>(virtfs: &VirtFsFilesystem<T>, everything_else: Vec<String>, initial_inode: &INode) -> Result<INode, Errno> {
       let mut inode = initial_inode.clone();
 
       let mut everything_else = VecDeque::from(everything_else);
@@ -477,20 +490,22 @@ impl<T: VirtFsFile> VirtFsFilesystem<T> {
     };
 
     // Create the root inode
-    let payload_number = virtfs.claim_free_payload().expect("virtfs: this must succeed");
-    let mut inode = virtfs.read_inode(ROOT_INODE_NUMBER).expect("virtfs: this must succeed");
-    inode.mode = inode
+    let root_payload_number = virtfs.claim_free_payload().expect("virtfs: this must succeed");
+    let mut root_inode = virtfs.read_inode(ROOT_INODE_NUMBER).expect("virtfs: this must succeed");
+    root_inode.mode = root_inode
       .mode
       .with_free(0)
       .with_type(FileModeType::Dir as u8)
     ;
-    inode.payload_number = payload_number;
+    root_inode.payload_number = root_payload_number;
 
     // Create root directory
-    let dir = Directory::new();
+    let mut dir = Directory::new();
+    dir.insert(root_inode.number, "..").unwrap();
+    dir.insert(root_inode.number, ".").unwrap();
 
     // Write root inode
-    virtfs.write_inode(&inode, ROOT_INODE_NUMBER).expect("virtfs: this must succeed");
+    virtfs.write_inode(&root_inode, ROOT_INODE_NUMBER).expect("virtfs: this must succeed");
     virtfs.write_dir(&dir, ROOT_INODE_NUMBER).expect("virtfs: this must succeed");
 
     virtfs
@@ -522,14 +537,14 @@ impl<T: VirtFsFile> VirtFsFilesystem<T> {
     }
   }
 
-  fn read_dir_from_inode(&mut self, inode_number: AddressSize) -> Result<Directory, Errno> {
+  fn read_dir_from_inode(&self, inode_number: AddressSize) -> Result<Directory, Errno> {
     match self.read_from_file(inode_number)? {
       Payload::Directory(directory) => Ok(directory),
       Payload::File(_) => Err(Errno::ENOTDIR(String::from("tried to read file from inode (TODO: inode number here), got directory"))),
     }
   }
 
-  fn read_from_file(&mut self, inode_number: AddressSize) -> Result<Payload<T>, Errno> {
+  fn read_from_file(&self, inode_number: AddressSize) -> Result<Payload<T>, Errno> {
     let payload_number = self.read_inode(inode_number)?.payload_number;
 
     let payload = self
@@ -559,7 +574,7 @@ impl<T: VirtFsFile> VirtFsFilesystem<T> {
     Ok(())
   }
 
-  fn read_inode(&mut self, inode_number: AddressSize) -> Result<INode, Errno> {
+  fn read_inode(&self, inode_number: AddressSize) -> Result<INode, Errno> {
     Ok(
       self
        .inodes

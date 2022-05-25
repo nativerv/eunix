@@ -1,4 +1,5 @@
 use std::any::Any;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::io::prelude::*;
@@ -10,6 +11,7 @@ use fancy_regex::Regex;
 
 use crate::eunix::fs::FileModeType;
 use crate::eunix::fs::NOBODY;
+use crate::eunix::kernel::UnixtimeSize;
 use crate::util::fixedpoint;
 use crate::util::unixtime;
 
@@ -105,9 +107,10 @@ pub struct INode {
   uid: Id,
   gid: Id,
   file_size: AddressSize,
-  atime: u32,
-  mtime: u32,
-  ctime: u32,
+  atime: u64,
+  mtime: u64,
+  ctime: u64,
+  btime: u64,
   direct_block_numbers: [AddressSize; 12],
   indirect_block_numbers: [AddressSize; 3],
   number: AddressSize,
@@ -124,6 +127,7 @@ impl From<INode> for VINode {
       atime: inode.atime,
       ctime: inode.ctime,
       mtime: inode.mtime,
+      btime: inode.btime,
       number: inode.number,
     }
   }
@@ -157,6 +161,7 @@ impl Default for INode {
       atime: 0,
       mtime: 0,
       ctime: 0,
+      btime: 0,
       direct_block_numbers: [NO_ADDRESS; 12],
       indirect_block_numbers: [NO_ADDRESS; 3],
       number: 0,
@@ -233,9 +238,8 @@ pub struct Block {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct E5FSFilesystemBuilder {
-  realfile: std::fs::File,
+  realfile: RefCell<std::fs::File>,
   device_size: AddressSize,
   superblock_size: AddressSize,
   inode_size: AddressSize,
@@ -273,13 +277,13 @@ impl E5FSFilesystemBuilder {
       _ => (),
     };
 
-    let realfile = std::fs::OpenOptions::new()
-      .read(true)
-      .write(true)
-      .open(device_realpath)
-      .unwrap();
+    let mut realfile = RefCell::new(std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(device_realpath)
+                    .unwrap());
 
-    let device_size = realfile.metadata().unwrap().len() as AddressSize;
+    let device_size = realfile.borrow_mut().metadata().unwrap().len() as AddressSize;
     let superblock_size = Superblock::size();
     let inode_size = std::mem::size_of::<INode>() as AddressSize;
 
@@ -434,7 +438,7 @@ impl Filesystem for E5FSFilesystem {
     Ok(new_vinode)
   } 
 
-  fn read_dir(&mut self, pathname: &str)
+  fn read_dir(&self, pathname: &str)
     -> Result<VDirectory, Errno> {
     let inode_number = self.lookup_path(pathname)?.number;
     let dir = self.read_dir_from_inode(inode_number)?;
@@ -442,7 +446,7 @@ impl Filesystem for E5FSFilesystem {
     Ok(dir.into())
   }
 
-  fn stat(&mut self, pathname: &str) 
+  fn stat(&self, pathname: &str) 
     -> Result<FileStat, Errno> {
     let inode_number = self.lookup_path(pathname)?.number;
     let INode {
@@ -451,6 +455,10 @@ impl Filesystem for E5FSFilesystem {
       links_count,
       uid,
       gid,
+      atime,
+      mtime,
+      ctime,
+      btime,
       ..
     } = self.read_inode(inode_number);
 
@@ -462,6 +470,10 @@ impl Filesystem for E5FSFilesystem {
       uid,
       gid,
       block_size: self.fs_info.block_size,
+      atime,
+      mtime,
+      ctime,
+      btime,
     })
   }
 
@@ -474,7 +486,7 @@ impl Filesystem for E5FSFilesystem {
   // Поиск файла в файловой системе. Возвращает INode фала.
   // Для VFS сначала матчинг на маунт-поинты и вызов lookup_path("/mount/point") у конкретной файловой системы;
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
-  fn lookup_path(&mut self, pathname: &str)
+  fn lookup_path(&self, pathname: &str)
     -> Result<VINode, Errno> {
     let split_pathname = VFS::split_path(pathname)?;
     let (everything_else, final_component) = split_pathname.clone();
@@ -491,7 +503,7 @@ impl Filesystem for E5FSFilesystem {
       filetype == FileModeType::Dir as u8
     }
 
-    let mut find_dir = |e5fs: &mut E5FSFilesystem, everything_else: Vec<String>| -> Result<INode, Errno> {
+    let mut find_dir = |e5fs: &E5FSFilesystem, everything_else: Vec<String>| -> Result<INode, Errno> {
       let mut everything_else = VecDeque::from(everything_else);
       // TODO: pass inode to read_dir_from_inode
       while everything_else.len() > 0 {
@@ -586,6 +598,13 @@ impl E5FSFilesystem {
     root_dir.insert(root_inode_number, ".").expect("this should succeed");
     e5fs.write_dir(&root_dir, root_inode_number)?;
 
+    // Set time to root inode
+    let mut root_inode = e5fs.read_inode(root_inode_number);
+    root_inode.atime = unixtime();
+    root_inode.mtime = unixtime();
+    root_inode.ctime = unixtime();
+    e5fs.write_inode(&root_inode, root_inode_number)?;
+
     Ok(e5fs)
   }
 
@@ -615,9 +634,9 @@ impl E5FSFilesystem {
     Ok(new_inode)
   }
 
-  fn read_dir_from_inode(&mut self, inode_number: AddressSize) -> Result<Directory, Errno> {
+  fn read_dir_from_inode(&self, inode_number: AddressSize) -> Result<Directory, Errno> {
     let dir_bytes = self.read_from_file(inode_number)?;
-    let directory = E5FSFilesystem::parse_directory(&mut self.fs_info, dir_bytes)?;
+    let directory = E5FSFilesystem::parse_directory(&self.fs_info, dir_bytes)?;
 
     Ok(directory)
   }
@@ -638,15 +657,18 @@ impl E5FSFilesystem {
       self.write_block(&Block { data: chunk.to_owned(), }, inode.direct_block_numbers[i])?;
     };
 
-    // Write new size to inode
+    // Write new size to inode, and update times
     let mut inode_cloned = inode.clone();
     inode_cloned.file_size = data.len() as AddressSize;
+    inode_cloned.atime = unixtime();
+    inode_cloned.mtime = unixtime();
+    inode_cloned.ctime = unixtime();
     self.write_inode(&inode_cloned, inode_number)?;
 
     Ok(inode_cloned)
   }
 
-  fn read_from_file(&mut self, inode_number: AddressSize) -> Result<Vec<u8>, Errno> {
+  fn read_from_file(&self, inode_number: AddressSize) -> Result<Vec<u8>, Errno> {
     let inode = self.read_inode(inode_number);
 
     let data = inode.direct_block_numbers
@@ -975,8 +997,8 @@ impl E5FSFilesystem {
     let address = self.fs_info.first_block_address + block_number * self.fs_info.block_size;
 
     // Seek to it and write bytes
-    self.fs_info.realfile.seek(SeekFrom::Start(address.try_into().unwrap())).unwrap();
-    self.fs_info.realfile.write_all(&block_bytes).unwrap();
+    self.fs_info.realfile.borrow_mut().seek(SeekFrom::Start(address.try_into().unwrap())).unwrap();
+    self.fs_info.realfile.borrow_mut().write_all(&block_bytes).unwrap();
 
     Ok(())
   }
@@ -998,6 +1020,7 @@ impl E5FSFilesystem {
     inode_bytes.write(&inode.atime.to_le_bytes()).unwrap();
     inode_bytes.write(&inode.mtime.to_le_bytes()).unwrap();
     inode_bytes.write(&inode.ctime.to_le_bytes()).unwrap();
+    inode_bytes.write(&inode.btime.to_le_bytes()).unwrap();
     inode_bytes.write(&inode.direct_block_numbers.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>()).unwrap();
     inode_bytes.write(&inode.indirect_block_numbers.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>()).unwrap();
 
@@ -1005,8 +1028,8 @@ impl E5FSFilesystem {
     let address = self.fs_info.first_inode_address + inode_number * self.fs_info.inode_size;
 
     // Seek to it and write bytes
-    self.fs_info.realfile.seek(SeekFrom::Start(address.try_into().unwrap())).unwrap();
-    self.fs_info.realfile.write_all(&inode_bytes).unwrap();
+    self.fs_info.realfile.borrow_mut().seek(SeekFrom::Start(address.try_into().unwrap())).unwrap();
+    self.fs_info.realfile.borrow_mut().write_all(&inode_bytes).unwrap();
 
     Ok(())
   }
@@ -1029,22 +1052,22 @@ impl E5FSFilesystem {
     superblock_bytes.write(&superblock.first_fbl_block_number.to_le_bytes()).unwrap();
 
     // Seek to 0 and write bytes
-    self.fs_info.realfile.seek(SeekFrom::Start(0)).unwrap();
-    self.fs_info.realfile.write_all(&superblock_bytes).unwrap();
+    self.fs_info.realfile.borrow_mut().seek(SeekFrom::Start(0)).unwrap();
+    self.fs_info.realfile.borrow_mut().write_all(&superblock_bytes).unwrap();
 
     Ok(())
   }
 
   #[allow(dead_code)]
-  fn read_block(&mut self, block_number: AddressSize) -> Block {
+  fn read_block(&self, block_number: AddressSize) -> Block {
     let mut block_bytes = vec![0u8; self.fs_info.block_size.try_into().unwrap()];
 
     // Get absolute address of block
     let address = self.fs_info.first_block_address + block_number * self.fs_info.block_size;
 
     // Seek to it and read bytes
-    self.fs_info.realfile.seek(SeekFrom::Start(address.try_into().unwrap()).try_into().unwrap()).unwrap();
-    self.fs_info.realfile.read_exact(&mut block_bytes).unwrap();
+    self.fs_info.realfile.borrow_mut().seek(SeekFrom::Start(address.try_into().unwrap()).try_into().unwrap()).unwrap();
+    self.fs_info.realfile.borrow_mut().read_exact(&mut block_bytes).unwrap();
 
     // Return bytes as is, as it is raw data of a file
     Block {
@@ -1053,7 +1076,7 @@ impl E5FSFilesystem {
   }
 
   #[allow(dead_code)]
-  fn read_inode(&mut self, inode_number: AddressSize) -> INode {
+  fn read_inode(&self, inode_number: AddressSize) -> INode {
     use std::mem::size_of;
 
     let mut inode_bytes = vec![0u8; self.fs_info.inode_size.try_into().unwrap()];
@@ -1062,8 +1085,8 @@ impl E5FSFilesystem {
     let address = self.fs_info.first_inode_address + inode_number * self.fs_info.inode_size;
 
     // Seek to it and read bytes
-    self.fs_info.realfile.seek(SeekFrom::Start(address.try_into().unwrap())).unwrap();
-    self.fs_info.realfile.read_exact(&mut inode_bytes).unwrap();
+    self.fs_info.realfile.borrow_mut().seek(SeekFrom::Start(address.try_into().unwrap())).unwrap();
+    self.fs_info.realfile.borrow_mut().read_exact(&mut inode_bytes).unwrap();
 
     // Then parse bytes, draining from vector mutably
     let mode = FileMode(u16::from_le_bytes(inode_bytes.drain(0..size_of::<u16>()).as_slice().try_into().unwrap())); 
@@ -1071,9 +1094,10 @@ impl E5FSFilesystem {
     let uid = Id::from_le_bytes(inode_bytes.drain(0..size_of::<Id>()).as_slice().try_into().unwrap()); 
     let gid = Id::from_le_bytes(inode_bytes.drain(0..size_of::<Id>()).as_slice().try_into().unwrap());
     let file_size = AddressSize::from_le_bytes(inode_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap());
-    let atime = u32::from_le_bytes(inode_bytes.drain(0..size_of::<u32>()).as_slice().try_into().unwrap());
-    let mtime = u32::from_le_bytes(inode_bytes.drain(0..size_of::<u32>()).as_slice().try_into().unwrap());
-    let ctime = u32::from_le_bytes(inode_bytes.drain(0..size_of::<u32>()).as_slice().try_into().unwrap());
+    let atime = UnixtimeSize::from_le_bytes(inode_bytes.drain(0..size_of::<UnixtimeSize>()).as_slice().try_into().unwrap());
+    let mtime = UnixtimeSize::from_le_bytes(inode_bytes.drain(0..size_of::<UnixtimeSize>()).as_slice().try_into().unwrap());
+    let ctime = UnixtimeSize::from_le_bytes(inode_bytes.drain(0..size_of::<UnixtimeSize>()).as_slice().try_into().unwrap());
+    let btime = UnixtimeSize::from_le_bytes(inode_bytes.drain(0..size_of::<UnixtimeSize>()).as_slice().try_into().unwrap());
     let direct_block_numbers = (0..12).fold(Vec::new(), |mut block_addresses, _| {
       block_addresses.push(AddressSize::from_le_bytes(inode_bytes.drain(0..size_of::<AddressSize>()).as_slice().try_into().unwrap()));
       block_addresses
@@ -1093,6 +1117,7 @@ impl E5FSFilesystem {
       atime,
       mtime,
       ctime,
+      btime,
       direct_block_numbers: direct_block_numbers.try_into().unwrap(),
       indirect_block_numbers: indirect_block_numbers.try_into().unwrap(),
       number: inode_number
@@ -1104,14 +1129,16 @@ impl E5FSFilesystem {
 
     let mut superblock_bytes = vec![0u8; Superblock::size().try_into().unwrap()];
 
-    let mut realfile = std::fs::OpenOptions::new()
-      .read(true)
-      .write(true)
-      .open(device_realpath)
-      .unwrap();
+    let mut realfile = RefCell::new(
+      std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(device_realpath)
+        .unwrap()
+    );
 
-    realfile.seek(SeekFrom::Start(0)).unwrap();
-    realfile.read_exact(&mut superblock_bytes).unwrap();
+    realfile.borrow_mut().seek(SeekFrom::Start(0)).unwrap();
+    realfile.borrow_mut().read_exact(&mut superblock_bytes).unwrap();
 
     // Then parse bytes, draining from vector mutably
     let filesystem_type: [u8; 16] = superblock_bytes.drain(0..16).as_slice().try_into().unwrap(); 
@@ -1319,9 +1346,10 @@ use crate::{util::{mktemp, mkenxvd}, eunix::fs::NOBODY};
         uid: (i as Id % NOBODY),
         gid: (i as Id % NOBODY) + 1,
         file_size: i * 1024,
-        atime: crate::util::unixtime(),
-        mtime: crate::util::unixtime(),
-        ctime: crate::util::unixtime(),
+        atime: unixtime(),
+        mtime: unixtime(),
+        ctime: unixtime(),
+        btime: unixtime(),
         direct_block_numbers: [i % 5; 12],
         indirect_block_numbers: [i % 6; 3],
         number: i,
@@ -1460,7 +1488,7 @@ use crate::{util::{mktemp, mkenxvd}, eunix::fs::NOBODY};
     let root_inode_number = e5fs.fs_info.root_inode_number;
     let expected_dir = Directory {
       entries_count: 2,
-      entries: BTreeMap::from_iter(IntoIter::new([
+      entries: BTreeMap::from_iter(IntoIterator::into_iter([
         (String::from("hello-world1.txt"), DirectoryEntry::new(file1_inode_num, "hello-world1.txt").unwrap()),
         (String::from("hello-world2.txt"), DirectoryEntry::new(file2_inode_num, "hello-world2.txt").unwrap()),
       ])),
