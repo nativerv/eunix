@@ -573,7 +573,7 @@ impl E5FSFilesystem {
     let mut fs_info = E5FSFilesystemBuilder::new(
         device_realpath, 
         inode_table_percentage, 
-        block_data_size
+        block_data_size,
       )
       .unwrap();
 

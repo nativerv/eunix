@@ -4,5 +4,8 @@ machine:
       path: ./devices/tty1.enxtty
       type: tty
     disk1:
-      path: ./devices/disk1.enxvd
+      path: ./devices/system.enxvd
+      type: block
+    disk2:
+      path: ./devices/home.enxvd
       type: block

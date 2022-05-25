@@ -32,7 +32,7 @@ pub fn main() {
     .find(|(_realpath, &dev_type)| dev_type == VirtualDeviceType::BlockDevice)
     .unwrap();
 
-  E5FSFilesystem::mkfs(sda1_realpath, 0.05, 4096).unwrap();
+  // E5FSFilesystem::mkfs(sda1_realpath, 0.05, 4096).unwrap();
 
   os.kernel.mount("", "/dev", eunix::fs::FilesystemType::devfs).unwrap();
   os.kernel.mount("", "/bin", eunix::fs::FilesystemType::binfs).unwrap();

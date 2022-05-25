@@ -119,7 +119,10 @@ impl DeviceFilesystem {
       inodes,
     }
   }
-  
+
+  /// Returns: Map of `name -> realpath`
+  /// Like:
+  /// "sda" -> "/home/user/disk.enxvd"
   pub fn device_names(&self) -> BTreeMap<String, String> {
     let mut tty_devices_count = 0;
     let mut block_devices_count = 0;
@@ -178,7 +181,8 @@ impl Filesystem for DeviceFilesystem {
     let (everything_else, _) = VFS::split_path(pathname)?;
 
     // TODO: FIXME: remove /. when .. and . is implemented 
-    if pathname != "/" && pathname != "/." {
+    // if pathname != "/" && pathname != "/." { // OLD
+    if pathname != "/" {
       return Err(Errno::ENOENT(String::from("no such file or directory")))
     }
 
@@ -187,7 +191,7 @@ impl Filesystem for DeviceFilesystem {
         entries: self.device_names()
           .iter()
           .enumerate()
-          .map(|(device_number, (_realpath, name))| {
+          .map(|(device_number, (name, _))| {
             (name.to_owned(), VDirectoryEntry::new(device_number as AddressSize, name))
           })
           .collect()
@@ -231,7 +235,7 @@ impl Filesystem for DeviceFilesystem {
     Err(Errno::EPERM(String::from("operation not permitted")))
   }
 
-  // Поиск файла в файловой системе. Возвращает INode фала.
+  // Поиск файла в файловой системе. Возвращает INode файла.
   // Для VFS сначала матчинг на маунт-поинты и вызов lookup_path("/mount/point") у конкретной файловой системы;
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
   fn lookup_path(&self, pathname: &str) -> Result<VINode, Errno> {
