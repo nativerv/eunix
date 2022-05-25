@@ -7,6 +7,7 @@ mod machine;
 mod util;
 mod binaries;
 
+use fancy_regex::Regex;
 use machine::{Machine, OperatingSystem};
 use std::io::*;
 use crate::{eunix::{e5fs::*, fs::{Filesystem, FileModeType}, kernel::{KERNEL_MESSAGE_HEADER_ERR, KernelParams, Errno}, binfs::BinFilesytem}, machine::VirtualDeviceType};
@@ -74,6 +75,7 @@ pub fn main() {
     let mut ifs = ' ';
     let mut ps1 = "# ";
     let mut pwd = "/";
+    let mut path = "/usr/bin:/bin";
 
     // A basic REPL prompt
     command.clear();
@@ -122,8 +124,33 @@ pub fn main() {
       "exit" => break,
 
       // No builtin matched - run pathname
-      pathname => {
-        match os.kernel.exec(pathname, args.as_ref()) {
+      command => {
+        // Calculate pathname
+        // Match command against PATH: 
+        // if (found in PATH) -> return new pathname
+        // otherwise          -> return command literally
+        let pathname = if Regex::new("^[_\\.a-zA-Z][^\\/\\n]*$")
+          .unwrap()
+          .is_match(command)
+          .unwrap()
+        {
+          if let Some(pathname) = path
+            .split(':')
+            .find_map(|location_pathname| {
+              let pathname = format!("{location_pathname}/{command}");
+              os.kernel.vfs.lookup_path(&pathname).ok().and_then(|_| Some(pathname))
+            })
+          {
+            pathname
+          } else {
+            command.to_string()
+          }
+        } else {
+          command.to_string()
+        };
+        
+        // Execute calculated pathname
+        match os.kernel.exec(&pathname, args.as_ref()) {
           Ok(exit_code) => {
             println!("[{KERNEL_MESSAGE_HEADER_ERR}]: program finished with exit code {exit_code}");
           },
