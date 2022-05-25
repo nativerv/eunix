@@ -391,13 +391,35 @@ impl Filesystem for E5FSFilesystem {
     // Write dir
     self.write_dir(&dir, dir_inode.number)?;
 
+    // Set inode's links count to 1 (link from parent dir)
+    self.change_links_count(inode.number, 1)?;
+
+    // Read new inode before returning, just to be sure
+    let inode = self.read_inode(inode.number);
     Ok(inode.into())
   }
 
   fn create_dir(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
-        todo!()
-    } 
+    let vinode = self.create_file(pathname)?;
+
+    let parent_pathname = format!("/{}", VFS::split_path(pathname)?.0.join("/"));
+    let parent_vinode = self.lookup_path(&parent_pathname)?;
+
+    // Construct dir with parent- and self- references
+    let mut dir = Directory::new();
+    dir.insert(parent_vinode.number, "..")?;
+    dir.insert(vinode.number, ".")?;
+    self.write_dir(&dir, vinode.number)?;
+
+    // Change inode mode to be of type `Dir`
+    self.change_mode(pathname, vinode.mode.with_type(FileModeType::Dir as u8))?;
+
+    // Set links count to 2 (self-reference and reference by a parent dir)
+    self.change_links_count(vinode.number, 2)?;
+
+    Ok(vinode)
+  } 
 
   fn read_file(&mut self, pathname: &str, _count: AddressSize)
     -> Result<Vec<u8>, Errno> {
@@ -1244,6 +1266,16 @@ impl E5FSFilesystem {
         };
         self.write_block(&block, block_number).unwrap();
       });
+  }
+
+  fn change_links_count(&mut self, inode_number: AddressSize, links_count: u32)
+    -> Result<INode, Errno>
+  {
+    let mut inode = self.read_inode(inode_number);
+    inode.links_count = links_count;
+    self.write_inode(&inode, inode_number)?;
+
+    Ok(inode)
   }
 }
 

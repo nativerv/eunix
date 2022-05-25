@@ -53,6 +53,22 @@ pub enum FileModeType {
   Char = 0b100,
 }
 
+/// From raw u8's: 0b000 -> File etc
+impl TryFrom<u8> for FileModeType {
+  type Error = Errno;
+
+  fn try_from(raw: u8) -> Result<Self, Self::Error> {
+    match raw {
+      x if x == FileModeType::File as u8 => Ok(FileModeType::File),
+      x if x == FileModeType::Dir as u8 => Ok(FileModeType::Dir),
+      x if x == FileModeType::Sys as u8 => Ok(FileModeType::Sys),
+      x if x == FileModeType::Block as u8 => Ok(FileModeType::Block),
+      x if x == FileModeType::Char as u8 => Ok(FileModeType::Char),
+      _ => Err(Errno::EINVAL(format!("cannot convert raw file type to enum: this error should not occur, bruh"))),
+    }
+  }
+}
+
 /// Default is user read-write only.
 impl Default for FileMode {
   fn default() -> Self {

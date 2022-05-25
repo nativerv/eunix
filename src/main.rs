@@ -8,8 +8,9 @@ mod util;
 
 use itertools::Itertools;
 use machine::{Machine, OperatingSystem};
+use chrono::prelude::*;
 
-use crate::{eunix::{e5fs::*, fs::{Filesystem, OpenFlags, OpenMode, FileModeType}, kernel::{KERNEL_MESSAGE_HEADER_ERR, KernelParams, Errno}, binfs::BinFilesytem}, machine::VirtualDeviceType};
+use crate::{eunix::{e5fs::*, fs::{Filesystem, OpenFlags, OpenMode, FileModeType, AddressSize}, kernel::{KERNEL_MESSAGE_HEADER_ERR, KernelParams, Errno}, binfs::BinFilesytem}, machine::VirtualDeviceType};
 use std::{
   fs::File,
   io::{Read, Seek, SeekFrom},
@@ -53,10 +54,111 @@ pub fn main() {
   binfs.create_file("/ls").unwrap();
   binfs.create_dir("/eblan").unwrap();
   binfs.create_file("/eblan/ls").unwrap();
-  binfs.write_binary("/ls", |args, kernel| {
+  binfs.write_binary("/ls", |args, kernel| -> AddressSize {
     if let Some(pathname) = args.get(1) {
       let dir = kernel.vfs.read_dir(&pathname).expect("ls: we know that this is a dir");
-      println!("{dir:?}");
+      
+      for (child_name, _) in dir.entries {
+        let child_pathname = format!("{pathname}/{child_name}");
+        let vinode = kernel.vfs.lookup_path(&child_pathname).expect(&format!("ls: we know that {child_pathname} exists"));
+
+        // Print file type
+        match vinode.mode.r#type().try_into().unwrap() {
+          FileModeType::Dir => print!("d"),
+          FileModeType::File => print!("-"),
+          FileModeType::Sys => print!("s"),
+          FileModeType::Block => print!("b"),
+          FileModeType::Char => print!("c"),
+        }
+
+        // Print file permissions
+        // User - read
+        if util::get_bit_at(vinode.mode.user(), 2) {
+          print!("r");
+        } else {
+          print!("-");
+        }
+        // User - write
+        if util::get_bit_at(vinode.mode.user(), 1) {
+          print!("w");
+        } else {
+          print!("-");
+        }
+        // User - execute
+        if util::get_bit_at(vinode.mode.user(), 0) {
+          print!("x");
+        } else {
+          print!("-");
+        }
+        // group - read
+        if util::get_bit_at(vinode.mode.group(), 2) {
+          print!("r");
+        } else {
+          print!("-");
+        }
+        // group - write
+        if util::get_bit_at(vinode.mode.group(), 1) {
+          print!("w");
+        } else {
+          print!("-");
+        }
+        // group - execute
+        if util::get_bit_at(vinode.mode.group(), 0) {
+          print!("x");
+        } else {
+          print!("-");
+        }
+        // others - read
+        if util::get_bit_at(vinode.mode.others(), 2) {
+          print!("r");
+        } else {
+          print!("-");
+        }
+        // others - write
+        if util::get_bit_at(vinode.mode.others(), 1) {
+          print!("w");
+        } else {
+          print!("-");
+        }
+        // others - execute
+        if util::get_bit_at(vinode.mode.others(), 0) {
+          print!("x");
+        } else {
+          print!("-");
+        }
+
+        print!("\t");
+
+        // Links count
+        print!("{}", vinode.links_count);
+
+        print!("\t");
+
+        // User and group owners
+        print!("{} {}", vinode.uid, vinode.gid);
+
+        print!("\t");
+
+        print!("{}", vinode.file_size);
+
+        print!("\t");
+
+        // Date and time
+        // Create a NaiveDateTime from the timestamp
+        let naive = NaiveDateTime::from_timestamp(vinode.mtime as i64, 0);
+
+        // Create a normal DateTime from the NaiveDateTime
+        let datetime: DateTime<Utc> = DateTime::from_utc(naive, Utc);
+
+        // Format the datetime how you want
+        let human_readable_date = datetime.format("%Y-%m-%d %H:%M:%S");
+        print!("{}", human_readable_date);
+
+        print!("\t");
+
+        // Finally, file name, and newline for the next
+        println!("{}", child_name);
+      }
       0
     } else {
       1
