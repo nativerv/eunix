@@ -10,7 +10,7 @@ mod binaries;
 use fancy_regex::Regex;
 use machine::{Machine, OperatingSystem};
 use std::io::*;
-use crate::{eunix::{e5fs::*, fs::{Filesystem, FileModeType}, kernel::{KERNEL_MESSAGE_HEADER_ERR, KernelParams, Errno}, binfs::BinFilesytem}, machine::VirtualDeviceType};
+use crate::{eunix::{e5fs::*, fs::{Filesystem, FileModeType, VFS}, kernel::{KERNEL_MESSAGE_HEADER_ERR, KernelParams, Errno}, binfs::BinFilesytem}, machine::VirtualDeviceType};
 use std::path::Path;
 
 pub fn main() {
@@ -33,13 +33,16 @@ pub fn main() {
     .find(|(_realpath, &dev_type)| dev_type == VirtualDeviceType::BlockDevice)
     .unwrap();
 
-  // E5FSFilesystem::mkfs(sda1_realpath, 0.05, 4096).unwrap();
+  E5FSFilesystem::mkfs(sda1_realpath, 0.05, 4096).unwrap();
 
   os.kernel.mount("", "/dev", eunix::fs::FilesystemType::devfs).unwrap();
   os.kernel.mount("", "/bin", eunix::fs::FilesystemType::binfs).unwrap();
   os.kernel.mount("/dev/sda", "/", eunix::fs::FilesystemType::e5fs).unwrap();
 
-  let binfs = &mut os.kernel.vfs.mount_points.get_mut("/bin").unwrap().driver.as_any().downcast_mut::<BinFilesytem>().unwrap();
+  os.kernel.vfs.create_dir("/mnt").unwrap();
+  os.kernel.vfs.create_dir("/mnt/eblan").unwrap();
+
+  let binfs = os.kernel.vfs.mount_points.get_mut("/bin").unwrap().driver.as_any().downcast_mut::<BinFilesytem>().unwrap();
   binfs.create_dir("/eblan").unwrap();
   binfs.create_file("/eblan/ls").unwrap();
 

@@ -571,6 +571,7 @@ impl<T: VirtFsFile> VirtFsFilesystem<T> {
   fn write_mode(&mut self, inode_number: AddressSize, mode: FileMode) -> Result<(), Errno> {
     let mut inode = self.read_inode(inode_number)?;
     inode.mode = mode;
+    self.write_inode(&inode, inode_number)?;
     Ok(())
   }
 

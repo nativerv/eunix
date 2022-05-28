@@ -61,9 +61,4 @@ pub fn get_bit_at(input: u8, n: u8) -> bool {
   }
 }
 
-/// Split /usr/bin:/bin -> ["/usr/bin", "/bin"]
-pub fn split_path_variable<'a>(path_variable: &'a str) -> impl Iterator<Item = &'a str> + 'a {
-  path_variable.split::<'a>(':')
-}
-
 // vim:ts=2 sw=2

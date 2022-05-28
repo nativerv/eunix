@@ -181,8 +181,8 @@ impl Filesystem for DeviceFilesystem {
     let (everything_else, _) = VFS::split_path(pathname)?;
 
     // TODO: FIXME: remove /. when .. and . is implemented 
-    // if pathname != "/" && pathname != "/." { // OLD
-    if pathname != "/" {
+    if pathname != "/" && pathname != "/." { // OLD
+    // if pathname != "/" {
       return Err(Errno::ENOENT(String::from("no such file or directory")))
     }
 

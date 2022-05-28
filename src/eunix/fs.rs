@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, any::Any};
+use std::{collections::BTreeMap, any::Any, str::FromStr};
 use core::fmt::{Debug, self};
 
 use fancy_regex::Regex;
@@ -519,6 +519,35 @@ pub enum FilesystemType {
   // tmpfs(MemFilesystem),
 }
 
+impl FromStr for FilesystemType {
+  type Err = String;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "devfs" => Ok(FilesystemType::devfs),
+      "binfs" => Ok(FilesystemType::binfs),
+      // "procfs" => Ok(FilesystemType::procfs),
+      // "sysfs" => Ok(FilesystemType::sysfs),
+      "e5fs" => Ok(FilesystemType::e5fs),
+      // "tmpfs" => Ok(FilesystemType::tmpfs),
+      _ => Err(format!("<unknown_fs>")),
+    }
+  }
+}
+
+impl fmt::Display for FilesystemType {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      FilesystemType::devfs => write!(f, "devfs"),
+      FilesystemType::binfs => write!(f, "binfs"),
+      // FilesystemType::procfs => write!(f, "procfs"),
+      // FilesystemType::sysfs => write!(f, "sysfs"),
+      FilesystemType::e5fs => write!(f, "e5fs"),
+      // FilesystemType::tmpfs => write!(f, "tmpfs"),
+    }
+  }
+}
+
 impl VFS {
   pub fn add_open_file(&mut self, pathname: &str, file_description: &FileDescription) -> Result<(), Errno> {
     self.open_files.insert(pathname.to_owned(), file_description.clone());
@@ -534,6 +563,7 @@ impl VFS {
   pub fn match_mount_point(&self, pathname: &str)
     -> Result<(String, String), Errno> 
   {
+    // println!("pathname_match_mount_point_begin: {pathname}");
     let (mount_point, _mounted_fs) = self.mount_points
       .iter()
       .sorted_by(|(key1, _), (key2, _)| key1.len().cmp(&key2.len()))
@@ -549,9 +579,10 @@ impl VFS {
       .expect("VFS::match_mount_point: regex can't be invalid because of regex::escape");
     let mut internal_pathname = regex.replace_all(pathname, "").to_string();
 
-    if internal_pathname == "" {
-      internal_pathname = String::from(".");
-    }
+    // Wut?
+    // if internal_pathname == "" {
+    //   internal_pathname = String::from(".");
+    // }
 
     // Add leading slash - required by (my) standart
     let internal_pathname = format!("/{}", internal_pathname);
@@ -559,6 +590,10 @@ impl VFS {
     Ok((mount_point.to_owned(), internal_pathname))
   }
 
+  /// "/"            -> `([], "/")`
+  /// "/foo"         -> `([], "foo")`
+  /// "/foo/bar"     -> `(["foo"], "bar")`
+  /// "/foo/bar/baz" -> `(["foo", "bar"], "baz")`
   pub fn split_path(pathname: &str) -> Result<(Vec<String>, String), Errno> {
     // Guard for empty `pathname`
     match &pathname {
