@@ -9,6 +9,7 @@ use std::io::Write;
 use std::slice::SliceIndex;
 
 use fancy_regex::Regex;
+use itertools::Itertools;
 
 use crate::eunix::fs::FileModeType;
 use crate::eunix::fs::NOBODY;
@@ -39,7 +40,8 @@ struct FindFblBlockResult {
  * fbl       - free blocks list, the reserved blocks at the
  *             end of the blocks list which contain free
  *             block numbers for quick allocation
- * fbl_chunk - vector of numbers parsed from fbl block
+ * fbl_chunk - vector of numbers parsed from `fbl` block
+ * fbl_index - index into `fbl` by step of address_size
  * */
 
 #[derive(Debug, PartialEq, Eq)]
@@ -296,7 +298,8 @@ pub struct E5FSFilesystemBuilder {
   address_size: AddressSize,
   block_numbers_per_fbl_chunk: AddressSize,
   inode_table_percentage: f32,
-  first_flb_block_number: AddressSize,
+  first_fbl_block_number: AddressSize,
+  first_fbl_block_address: AddressSize,
   root_inode_number: AddressSize,
 }
 
@@ -359,16 +362,19 @@ impl E5FSFilesystemBuilder {
     let block_numbers_per_fbl_chunk = block_data_size / address_size;
 
     // Guard for not enough blocks even for free blocks list
-    match blocks_needed_for_fbl {
-      n if n >= blocks_count => return Err("disk size is too small: blocks_needed_for_fbl > blocks_count"),
-      _ => (),
+    if blocks_needed_for_fbl >= blocks_count {
+      return Err("disk size is too small: blocks_needed_for_fbl > blocks_count");
     }
 
     let block_table_size = block_size * blocks_count;
 
     // Basically step over all free block numbers - 
     // first after that will be beginning of `fbl`
-    let first_flb_block_number = free_blocks_count;
+    let first_fbl_block_number = free_blocks_count;
+    let first_fbl_block_address = 
+      superblock_size 
+      + inode_table_size 
+      + (blocks_count - blocks_needed_for_fbl) * block_size;
 
     Ok(Self {
       realfile,
@@ -396,7 +402,8 @@ impl E5FSFilesystemBuilder {
       address_size,
       block_numbers_per_fbl_chunk,
       inode_table_percentage,
-      first_flb_block_number,
+      first_fbl_block_number,
+      first_fbl_block_address,
       root_inode_number: 0,
     })
   }
@@ -941,31 +948,40 @@ impl E5FSFilesystem {
     Ok(())
   }
 
-  fn find_fbl_block<F>(&mut self, f: F) -> Result<Option<(Vec<u32>, (u32, usize))>, Errno> 
+  /// Returns block number, which is also an index into `fbl`.
+  fn find_block_in_fbl<F>(&mut self, f: F) -> Result<AddressSize, Errno> 
     where F: Fn(AddressSize) -> bool
   {
-    let result = (self.fs_info.first_flb_block_number..self.fs_info.blocks_count)
-      .map(|fbl_block_number| {
-        E5FSFilesystem::parse_block_numbers_from_block(&self.read_block(fbl_block_number))
+    // let result = (self.fs_info.first_fbl_block_number..self.fs_info.blocks_count)
+    //   .map(|fbl_block_number| {
+    //     E5FSFilesystem::parse_block_numbers_from_block(&self.read_block(fbl_block_number))
+    //   })
+    //   .find_map(|fbl_block| {
+    //     let maybe_fbl_number_and_index = fbl_block
+    //       .iter()
+    //       .zip(0..)
+    //       .find_map(|(&block_number, index)| { 
+    //         match f(block_number) {
+    //           true => Some((block_number, index)),
+    //           false => None,
+    //         }
+    //       });
+    //
+    //     match maybe_fbl_number_and_index {
+    //       Some(fbl_number_and_index) => Some((fbl_block, fbl_number_and_index)),
+    //       None => None
+    //     }
+    //   });
+    //
+    //   Ok(result)
+    (self.fs_info.first_fbl_block_number..self.fs_info.blocks_count)
+      .flat_map(|fbl_block_number| { 
+        E5FSFilesystem::parse_block_numbers_from_block(
+          &self.read_block(fbl_block_number)
+        ) 
       })
-      .find_map(|fbl_block| {
-        let maybe_fbl_number_and_index = fbl_block
-          .iter()
-          .zip(0..)
-          .find_map(|(&block_number, index)| { 
-            match f(block_number) {
-              true => Some((block_number, index)),
-              false => None,
-            }
-          });
-
-        match maybe_fbl_number_and_index {
-          Some(fbl_number_and_index) => Some((fbl_block, fbl_number_and_index)),
-          None => None
-        }
-      });
-
-      Ok(result)
+      .find(|block_number| f(*block_number))
+      .ok_or(Errno::ENOSPC(format!("e5fs::find_block_in_fbl: not found")))
 
     // let first_flb_block_number = self.fs_info.first_flb_block_number;
     // let blocks_count = self.fs_info.blocks_count;
@@ -1002,80 +1018,30 @@ impl E5FSFilesystem {
   /// Replace specified inode in `free_inode_numbers` with `NO_ADDRESS`
   fn claim_free_block(&mut self) -> Result<AddressSize, Errno> {
     // 1. Basically try to find first chunk with free block number != NO_ADDRESS
-    let maybe_free_block_numbers = self.find_fbl_block(|block_number| block_number != NO_ADDRESS)?;
-    // let FindFblBlockResult {
-    //   fbl_block_number,
-    //   index_in_fbl_block,
-    //   mut fbl_chunk,
-    // } = self
-    //   .find_fbl_block(|block_number| block_number != NO_ADDRESS)?
-    //   // 2. Then see if we actually have at least one such chunk
-    //   .ok_or(Errno::ENOENT(format!(
-    //     "no fbl chunk with free_block_number != NO_ADDRESS (unclaimed slot)"
-    //   )))?;
+    let block_number = self.find_block_in_fbl(|n| n != NO_ADDRESS)?;
 
-    // 2. Then see if we actually have at least one such chunk
-    let free_block_numbers = match maybe_free_block_numbers {
-      None => return Err(Errno::ENOENT(String::from("no fbl chunk with free block number != NO_ADDRESS (unclaimed slot)"))),
-      Some(free_block_numbers) => free_block_numbers,
-    };
-    
-    let (mut fbl_chunk, (fbl_block_number, index_in_fbl_block)) = free_block_numbers;
+    let address_size = self.fs_info.address_size;
+    let address = self.fs_info.first_fbl_block_address + (block_number * address_size);
 
-    // 3. Save copy of `free_block_number` that we've found
-    let free_block_number = fbl_chunk.get(index_in_fbl_block).unwrap().to_owned();
-
-    // 4. Then write `NO_ADDRESS` in place of the original
-    *fbl_chunk.get_mut(index_in_fbl_block).unwrap() = NO_ADDRESS;
-
-    // 5. Write (save to disk) mutated fbl_chunk
-    self
-      .write_block(
-        &Block {
-          data: fbl_chunk.iter().flat_map(|x| x.to_le_bytes()).collect(),
-        },
-        fbl_block_number,
-      )
-      .unwrap();
+    // 5. Write (save to disk) NO_ADDRESS to fbl_index to indicate that
+    // this block is claimed
+    self.fs_info.realfile.borrow_mut().seek(SeekFrom::Start(address.try_into().unwrap())).unwrap();
+    self.fs_info.realfile.borrow_mut().write_all(&NO_ADDRESS.to_le_bytes()).unwrap();
 
     // 5. And return it
-    Ok(free_block_number)
+    Ok(block_number)
   }
 
   /// Replace specified inode in `free_inode_numbers` with `NO_ADDRESS`
   /// FIXME: block_number may left dangling in inode's fields
   fn release_block(&mut self, block_number: AddressSize) -> Result<(), Errno> {
-    // 1. Basically try to find first chunk with free block number == NO_ADDRESS
-    let maybe_free_block_numbers = self.find_fbl_block(|block_number| block_number == NO_ADDRESS)?;
-    // let FindFblBlockResult {
-    //   fbl_block_number,
-    //   index_in_fbl_block,
-    //   mut fbl_chunk,
-    // } = self
-    //   .find_fbl_block(|block_number_in_fbl_chunk| block_number_in_fbl_chunk == NO_ADDRESS)?
-    //   // 2. Then see if we actually have at least one such chunk
-    //   .ok_or(Errno::ENOENT(format!(
-    //     "no fbl chunk with claimed blocks"
-    //   )))?;
+    let address_size = self.fs_info.address_size;
+    let address = self.fs_info.first_fbl_block_address + (block_number * address_size);
 
-    // 2. Then see if we actually have at least one such chunk
-    let free_block_numbers = match maybe_free_block_numbers {
-      None => return Err(Errno::ENOENT(String::from("no fbl chunk with free block number == NO_ADDRESS (claimed slot)"))),
-      Some(free_block_numbers) => free_block_numbers,
-    };
-
-    let (mut fbl_chunk, (fbl_block_number, index_in_fbl_block)) = free_block_numbers;
-
-    // 3. Save copy of `free_block_number` that we've found
-    let free_block_number = fbl_chunk.get(index_in_fbl_block).unwrap().to_owned();
-
-    // 4. Then write block_address in place of the original `NO_ADDRESS` block
-    *fbl_chunk.get_mut(index_in_fbl_block).unwrap() = block_number;
-
-    // 5. Write mutated fbl_chunk
-    self.write_block(&Block {
-      data: fbl_chunk.iter().flat_map(|x| x.to_le_bytes()).collect(),
-    }, fbl_block_number).unwrap();
+    // 5. Write (save to disk) NO_ADDRESS to fbl_index to indicate that
+    // this block is claimed
+    self.fs_info.realfile.borrow_mut().seek(SeekFrom::Start(address.try_into().unwrap())).unwrap();
+    self.fs_info.realfile.borrow_mut().write_all(&block_number.to_le_bytes()).unwrap();
 
     // 5. And return it
     Ok(())
@@ -1198,6 +1164,16 @@ impl E5FSFilesystem {
     // Guard for block_number out of bounds
     if block_number > self.fs_info.blocks_count {
       return Err(Errno::ENOENT(String::from("write_block: block_number out of bounds")))
+    }
+    // Guard for block data being of invalid size
+    if block.data.len() as AddressSize > self.fs_info.block_data_size {
+      return Err(Errno::ENOENT(
+          format!(
+            "write_block: block.data should be {}, was {}",
+            self.fs_info.block_data_size,
+            block.data.len()
+          )
+      ))
     }
 
     // Read bytes from file
@@ -1455,58 +1431,42 @@ impl E5FSFilesystem {
     Ok(Directory::from(entries))
   }
 
-  fn generate_fbl(&self) -> Vec<Vec<AddressSize>> {
-    // Basically what we do in the next ~30 lines:
-    // 1. Generate addresses of free blocks
-    // 2. Divide it to chunks of however many fits to one block
-    // 3. If addresses doesnt divide into chunks evenly,
-    //    leave a remainder in separate small chunk
-    // 4. If above is the case and remainder was created,
-    //    fill it to be the size of full chunks
-    //    with NO_BLOCK addresses
-    let free_blocks_numbers = 
-      (0..self.fs_info.first_flb_block_number).collect::<Vec<AddressSize>>();
+  fn generate_fbl(&self) -> Vec<AddressSize> {
+    let fbl_size_in_slots = 
+      (self.fs_info.block_size / self.fs_info.address_size) * self.fs_info.blocks_needed_for_fbl;
 
-    let fbl_chunks_iterator = 
-      free_blocks_numbers
-        .chunks_exact(self.fs_info.block_numbers_per_fbl_chunk as usize);
-
-    let mut fbl_chunks = 
-      fbl_chunks_iterator
-        .clone()
-        .map(|chunk| chunk.to_owned())
-        .collect::<Vec<Vec<AddressSize>>>();
-
-    let mut remainder = fbl_chunks_iterator
-      .remainder()
-      .to_vec();
-
-    let lacking_addresses_count = self.fs_info.block_numbers_per_fbl_chunk - remainder.len() as AddressSize;
-
-    if lacking_addresses_count > 0 {
-      remainder
-        .append(&mut vec![NO_ADDRESS; lacking_addresses_count as usize]);
-    }
-
-    fbl_chunks.push(remainder);
-
-    fbl_chunks
+    // Zip stub iterator with number of elements equal to
+    // amount of slots in `fbl` sector
+    // with actual free block numbers tailed with NO_ADDRESS
+    (0..fbl_size_in_slots)
+      .zip((0..self.fs_info.first_fbl_block_number).chain(std::iter::repeat(NO_ADDRESS)))
+      .map(|(_, block_address)| block_address)
+      .collect()
   }
 
   fn write_fbl(&mut self) {
-    let fbl_chunks = self.generate_fbl();
+    let fbl = self.generate_fbl();
 
-    let fbl_block_numbers = self.fs_info.first_flb_block_number..self.fs_info.blocks_count;
+    // let fbl_bytes: Vec<u8> = fbl.iter().flat_map(|x| x.to_le_bytes()).collect();
+
+    // let address = self.fs_info.first_block_address + self.fs_info.first_fbl_block_number * self.fs_info.block_size;
+
+    // self.fs_info.realfile.borrow_mut().seek(SeekFrom::Start(address.try_into().unwrap())).unwrap();
+    // self.fs_info.realfile.borrow_mut().write_all(&fbl_bytes).unwrap();
 
     // Write free blocks list to last N blocks
     // [ sb ... i1..iN ... b1[b1..bX ... fbl1..fblN]bN ]
     // Something like that ^
-    fbl_chunks
-      .iter()
-      .zip(fbl_block_numbers)
-      .for_each(|(chunk, block_number)| {
+    // use itertools::Itertools;
+    fbl
+      .into_iter()
+      .flat_map(AddressSize::to_le_bytes)
+      .chunks(self.fs_info.block_size as usize)
+      .into_iter()
+      .zip(self.fs_info.first_fbl_block_number..self.fs_info.blocks_count)
+      .for_each(|(block_bytes, block_number)| {
         let block = Block {
-          data: chunk.iter().flat_map(|x| x.to_le_bytes()).collect(),
+          data: block_bytes.collect(),
         };
         self.write_block(&block, block_number).unwrap();
       });
@@ -1636,18 +1596,17 @@ use crate::{util::{mktemp, mkenxvd}, eunix::fs::NOBODY};
 
     e5fs.write_fbl();
 
-    let fbl_chunks = e5fs.generate_fbl();
+    let fbl = e5fs.generate_fbl();
 
-    let fbl_chunks_from_file = (e5fs.fs_info.first_flb_block_number..e5fs.fs_info.blocks_count)
-      .map(|block_number| {
-        let block = e5fs.read_block(block_number);
-        let block_numbers_from_block = E5FSFilesystem::parse_block_numbers_from_block(&block);
-
-        block_numbers_from_block
+    let fbl_from_file: Vec<AddressSize> = (e5fs.fs_info.first_fbl_block_number..e5fs.fs_info.blocks_count)
+      .flat_map(|fbl_block_number| { 
+        E5FSFilesystem::parse_block_numbers_from_block(
+          &e5fs.read_block(fbl_block_number)
+        ) 
       })
-      .collect::<Vec<Vec<AddressSize>>>();
+      .collect();
 
-    assert_eq!(fbl_chunks_from_file, fbl_chunks);
+    assert_eq!(fbl, fbl_from_file, "fbl from file should match expected");
   }
 
   #[test]
@@ -1729,21 +1688,9 @@ use crate::{util::{mktemp, mkenxvd}, eunix::fs::NOBODY};
 
     let mut e5fs = E5FSFilesystem::mkfs(tempfile.as_str(), 0.05, 4096).unwrap();
 
-    let (fbl_chunk, (free_block_num, free_block_num_idx)) = e5fs.find_fbl_block(|block_number| block_number != NO_ADDRESS).unwrap().unwrap();
-    // let FindFblBlockResult { 
-    //   fbl_block_number, 
-    //   index_in_fbl_block, 
-    //   fbl_chunk 
-    // } = e5fs.find_fbl_block(|block_number| block_number != NO_ADDRESS).unwrap().unwrap();
+    let block_number = e5fs.find_block_in_fbl(|block_number| block_number != NO_ADDRESS).unwrap();
 
-    // Simulate fbl with rest left as NO_ADDRESS
-    let expected = (0..e5fs.fs_info.first_flb_block_number)
-      .chain(
-        (e5fs.fs_info.first_flb_block_number..e5fs.fs_info.block_numbers_per_fbl_chunk).map(|_| NO_ADDRESS)
-      )
-      .collect::<Vec<u32>>();
-
-    assert_eq!(fbl_chunk, expected);
+    assert_eq!(1, block_number);
   }
 
   #[test]
@@ -1823,13 +1770,13 @@ use crate::{util::{mktemp, mkenxvd}, eunix::fs::NOBODY};
     println!("home_dir {}: {}", home_inode.number, e5fs.read_as_dir_i(home_inode.number).unwrap());
     println!("nrv_dir  {}: {}", nrv_inode.number, e5fs.read_as_dir_i(nrv_inode.number).unwrap());
 
-    let first_fbl_block = E5FSFilesystem::parse_block_numbers_from_block(&e5fs.read_block(e5fs.fs_info.first_flb_block_number));
-    println!("{first_fbl_block:#?}");
+    let first_fbl_block = E5FSFilesystem::parse_block_numbers_from_block(&e5fs.read_block(e5fs.fs_info.first_fbl_block_number));
+    // println!("{first_fbl_block:#?}");
     let read_nrv_vinode = e5fs.lookup_path("/home/nrv").unwrap();
-    // let read_bashrc_vinode = e5fs.lookup_path("/home/nrv/.bashrc").unwrap();
+    let read_bashrc_vinode = e5fs.lookup_path("/home/nrv/.bashrc").unwrap();
 
-    assert_eq!(read_nrv_vinode, nrv_inode.into(), "read_nrv_vinode should be equal to nrv_inode");
-    // assert_eq!(read_bashrc_vinode, bashrc_inode.into(), "read_bashrc_vinode should be equal to bashrc_vinode");
+    assert_eq!(read_nrv_vinode.number, nrv_inode.number, "read_nrv_vinode should be equal to nrv_inode");
+    assert_eq!(read_bashrc_vinode.number, bashrc_inode.number, "read_bashrc_vinode should be equal to bashrc_vinode");
   }
 
 
