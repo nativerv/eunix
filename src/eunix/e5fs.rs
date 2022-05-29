@@ -546,17 +546,17 @@ impl Filesystem for E5FSFilesystem {
     -> Result<VINode, Errno> {
     let split_pathname = VFS::split_path(pathname)?;
 
-    // Base case: lookup_path("/")
+    // Base case: 
+    //   lookup_path /
     if split_pathname == (Vec::new(), String::from("/")) {
       let inode = self.read_inode(self.fs_info.root_inode_number);
       return Ok(inode.into());
     };
 
     // General case: 
-    //   lookup_path("/foo")
-    //   lookup_path("/foo/bar")
-    //   lookup_path("/foo/bar/baz")
-    
+    //   lookup_path /foo
+    //   lookup_path /foo/bar
+    //   lookup_path /foo/bar/baz
     // For every `component` in `everything_else` look for that
     // `component` inside `inode` (initially root inode),
     // replacing it with inode pointed by component
@@ -582,88 +582,6 @@ impl Filesystem for E5FSFilesystem {
       .get(&final_component)
       .map(|entry| self.read_inode(entry.inode_number).into())
       .ok_or(Errno::ENOENT(format!("e5fs.lookup_path: no such file or directory {final_component} (get(final_component))")))
-
-    // fn is_dir(inode: VINode) -> bool {
-    //   let filetype = inode.mode.r#type();
-    //   filetype == FileModeType::Dir as u8
-    // }
-    // 
-    // let mut find_dir = |e5fs: &E5FSFilesystem, everything_else: Vec<String>| -> Result<INode, Errno> {
-    //   let mut everything_else = VecDeque::from(everything_else);
-    //   // TODO: pass inode to read_dir_from_inode
-    //   while everything_else.len() > 0 {
-    //     if !is_dir(inode.into()) {
-    //       return Err(Errno::ENOTDIR(String::from("e5fs.lookup_path: not a directory (find_dir)")))
-    //     }
-    //
-    //     let piece = everything_else.pop_front().unwrap();
-    //     let dir = e5fs.read_dir_from_inode(inode.number)?;
-    //     if let Some(entry) = dir.entries.get(&piece.to_owned()) {
-    //       inode = e5fs.read_inode(entry.inode_number);
-    //     } else {
-    //       return Err(Errno::ENOENT(String::from("e5fs.lookup_path: no such file or directory")))
-    //     }
-    //   }
-    //
-    //   Ok(inode)
-    // };
-    //
-    // // fn find_dir(e5fs: &E5FSFilesystem, components: &[String], inode: &INode) -> Result<INode, Errno> {
-    // //   // TODO: pass inode to read_dir_from_inode
-    // //   match &components[..] {
-    // //     [] => {
-    // //       Ok(inode.clone())
-    // //     },
-    // //     // [component] => {
-    // //     //   let dir = e5fs.read_dir_from_inode(inode.number)?;
-    // //     //   match dir.entries.get(&*component) {
-    // //     //     Some(dir_ent) => Ok(e5fs.read_inode(dir_ent.inode_number)),
-    // //     //     None => Err(Errno::ENOENT(format!("no component in directory: {component}"))),
-    // //     //   }
-    // //     // },
-    // //     [component, components @ ..] => {
-    // //       let dir = e5fs.read_dir_from_inode(inode.number)?;
-    // //
-    // //       match dir.entries.get(&*component) {
-    // //         Some(directory_entry) => {
-    // //           let next_inode = e5fs.read_inode(directory_entry.inode_number);
-    // //           find_dir(e5fs, components, &next_inode)
-    // //         },
-    // //         None => Err(Errno::ENOENT(format!("no component in directory: {component}"))),
-    // //       }
-    // //     },
-    // //   }
-    // //   // while everything_else.len() > 0 {
-    // //   //   if !is_dir(inode.into()) {
-    // //   //     return Err(Errno::ENOTDIR(String::from("e5fs.lookup_path: not a directory (find_dir)")))
-    // //   //   }
-    // //   //
-    // //   //   let piece = everything_else.pop_front().unwrap();
-    // //   //   let dir = e5fs.read_dir_from_inode(inode.number)?;
-    // //   //   if let Some(entry) = dir.entries.get(&piece.to_owned()) {
-    // //   //     Ok(e5fs.read_inode(entry.inode_number))
-    // //   //   } else {
-    // //   //     return Err(Errno::ENOENT(String::from("e5fs.lookup_path: no such file or directory")))
-    // //   //   }
-    // //   // }
-    // // }
-    //
-    // // Try to find directory - "everything else" part of `pathname`
-    // // let joined_components: Vec<String> = everything_else
-    // //   .iter()
-    // //   .chain(vec![final_component.clone()].iter())
-    // //   .cloned()
-    // //   .collect();
-    // let dir_inode = find_dir(self, everything_else)?;
-    // let dir = self.read_dir_from_inode(dir_inode.number)?;
-    //
-    // // Try to find file in directory and map its INode to VINode -
-    // // "final component" part of `pathname`, then return it
-    // dir.entries
-    //   .get(&final_component)
-    //   // Read its inode_number
-    //   .map(|entry| self.read_inode(entry.inode_number).into())
-    //   .ok_or_else(|| Errno::ENOENT(format!("e5fs.lookup_path: no such file or directory {final_component} (get(final_component))")))
   } 
 
   fn name(&self) -> String { 
@@ -759,10 +677,10 @@ impl E5FSFilesystem {
 
     // Write `Vec` to file
     let new_inode = self.write_data_i(data, inode_number, false)?;
-    // new_inode.mode = new_inode.mode.with_type(FileModeType::Dir as u8);
 
-    // Set inode mode to be directory
-    // self.write_inode(&new_inode, inode_number)?;
+    // NOTICE: Set inode mode to be directory (???)
+    //new_inode.mode = new_inode.mode.with_type(FileModeType::Dir as u8);
+    //self.write_inode(&new_inode, inode_number)?;
 
     Ok(new_inode)
   }
@@ -822,13 +740,6 @@ impl E5FSFilesystem {
   fn get_inode_blocks_count(&mut self, inode_number: AddressSize) -> Result<AddressSize, Errno> {
     let inode = self.read_inode(inode_number);
 
-    // Ok(
-    //   inode.direct_block_numbers
-    //    .iter()
-    //    .fold(0, |blocks_count, &block_number| {
-    //      blocks_count + if block_number != NO_ADDRESS { 1 }  else { 0 }
-    //    })
-    // )
     Ok(
       inode
         .direct_block_numbers
@@ -862,7 +773,7 @@ impl E5FSFilesystem {
       None => {
         let free_inode_nums = (0..self.fs_info.inodes_count)
           .filter(|&inode_number| {
-            let mut inode = self.read_inode(inode_number);
+            let inode = self.read_inode(inode_number);
             match inode.mode.free() {
               0 => false,
               1 => true,
@@ -931,28 +842,6 @@ impl E5FSFilesystem {
   fn find_block_in_fbl<F>(&mut self, f: F) -> Result<AddressSize, Errno> 
     where F: Fn(AddressSize) -> bool
   {
-    // let result = (self.fs_info.first_fbl_block_number..self.fs_info.blocks_count)
-    //   .map(|fbl_block_number| {
-    //     E5FSFilesystem::parse_block_numbers_from_block(&self.read_block(fbl_block_number))
-    //   })
-    //   .find_map(|fbl_block| {
-    //     let maybe_fbl_number_and_index = fbl_block
-    //       .iter()
-    //       .zip(0..)
-    //       .find_map(|(&block_number, index)| { 
-    //         match f(block_number) {
-    //           true => Some((block_number, index)),
-    //           false => None,
-    //         }
-    //       });
-    //
-    //     match maybe_fbl_number_and_index {
-    //       Some(fbl_number_and_index) => Some((fbl_block, fbl_number_and_index)),
-    //       None => None
-    //     }
-    //   });
-    //
-    //   Ok(result)
     (self.fs_info.first_fbl_block_number..self.fs_info.blocks_count)
       .flat_map(|fbl_block_number| { 
         E5FSFilesystem::parse_block_numbers_from_block(
@@ -961,53 +850,22 @@ impl E5FSFilesystem {
       })
       .find(|block_number| f(*block_number))
       .ok_or(Errno::ENOSPC(format!("e5fs::find_block_in_fbl: not found")))
-
-    // let first_flb_block_number = self.fs_info.first_flb_block_number;
-    // let blocks_count = self.fs_info.blocks_count;
-    //
-    // let result = (first_flb_block_number..blocks_count)
-    //   .map(|fbl_block_number| {
-    //     (
-    //       E5FSFilesystem::parse_block_numbers_from_block(
-    //         &self.read_block(fbl_block_number)
-    //       ),
-    //       fbl_block_number
-    //     )
-    //   })
-    //   .find_map(|(block_with_block_numbers, fbl_block_number)| {
-    //     block_with_block_numbers
-    //       .iter()
-    //       .zip(0..)
-    //       .find_map(|(&block_number, index_in_fbl_block)| { 
-    //         match f(block_number) {
-    //           true => Some((block_number, fbl_block_number, index_in_fbl_block)),
-    //           false => None,
-    //         }
-    //       })
-    //     .map(|(block_number, fbl_block_number, index_in_fbl_block)| {
-    //       FindFblBlockResult {
-    //         fbl_block_number,
-    //         index_in_fbl_block,
-    //         fbl_chunk: block_with_block_numbers,
-    //       }
-    //     })
-    //   });
   }
 
   /// Replace specified inode in `free_inode_numbers` with `NO_ADDRESS`
   fn claim_free_block(&mut self) -> Result<AddressSize, Errno> {
-    // 1. Basically try to find first chunk with free block number != NO_ADDRESS
+    // 1. Basically try to find index of block with number != NO_ADDRESS in `fbl`
     let block_number = self.find_block_in_fbl(|n| n != NO_ADDRESS)?;
 
     let address_size = self.fs_info.address_size;
     let address = self.fs_info.first_fbl_block_address + (block_number * address_size);
 
-    // 5. Write (save to disk) NO_ADDRESS to fbl_index to indicate that
-    // this block is claimed
+    // 2. Write (save to disk) NO_ADDRESS to that index
+    // to indicate that this block was claimed
     self.fs_info.realfile.borrow_mut().seek(SeekFrom::Start(address.try_into().unwrap())).unwrap();
     self.fs_info.realfile.borrow_mut().write_all(&NO_ADDRESS.to_le_bytes()).unwrap();
 
-    // 5. And return it
+    // 3. Return block_number
     Ok(block_number)
   }
 
@@ -1017,12 +875,13 @@ impl E5FSFilesystem {
     let address_size = self.fs_info.address_size;
     let address = self.fs_info.first_fbl_block_address + (block_number * address_size);
 
-    // 5. Write (save to disk) NO_ADDRESS to fbl_index to indicate that
-    // this block is claimed
+    // 1. Write (save to disk) `block_number` to fbl index of
+    // `block_number` (fbl indices correlate 1:1 to block numbers)
+    // to indicate that this block is claimed
     self.fs_info.realfile.borrow_mut().seek(SeekFrom::Start(address.try_into().unwrap())).unwrap();
     self.fs_info.realfile.borrow_mut().write_all(&block_number.to_le_bytes()).unwrap();
 
-    // 5. And return it
+    // 2. And return it
     Ok(())
   }
 
