@@ -430,7 +430,6 @@ impl Filesystem for E5FSFilesystem {
 
     // Read dir from disk
     let mut dir = self.read_as_dir_i(parent_inode.number)?;
-    // println!("read dir    : {}", dir);
 
     // Guard for file already existing
     if let Some(_) = dir.entries.get(&final_component)
@@ -443,7 +442,6 @@ impl Filesystem for E5FSFilesystem {
 
     // Push allocated to dir
     dir.insert(inode.number, final_component.as_str())?;
-    // println!("inserted dir: {}", dir);
 
     // Write dir
     self.write_dir_i(&dir, parent_inode.number)?;
@@ -506,7 +504,6 @@ impl Filesystem for E5FSFilesystem {
 
   fn stat(&self, pathname: &str) 
     -> Result<FileStat, Errno> {
-    // println!("pathname_before_pass_e5fs_stat:   {pathname}");
     let inode_number = self.lookup_path(pathname)?.number;
     let INode {
       mode,
@@ -548,7 +545,6 @@ impl Filesystem for E5FSFilesystem {
   fn lookup_path(&self, pathname: &str)
     -> Result<VINode, Errno> {
     let split_pathname = VFS::split_path(pathname)?;
-    // println!("{split_pathname:?}");
 
     // Base case: lookup_path("/")
     if split_pathname == (Vec::new(), String::from("/")) {
@@ -570,26 +566,18 @@ impl Filesystem for E5FSFilesystem {
     let (everything_else, final_component) = split_pathname.clone();
     let mut inode_number = self.fs_info.root_inode_number;
 
-    println!("begin lookup_path {pathname}");
-    println!("start `everything_else` lookup");
     for component in everything_else {
-
-      println!("  reading dir from inode {inode_number} component '{component}'");
       let dir = self.read_as_dir_i(inode_number)?;
-      println!("  dir: {dir}");
       inode_number = dir.entries
         .get(&component)
         .map(|entry| entry.inode_number)
         .ok_or(Errno::ENOENT(format!("e5fs.lookup_path: no such component: {component}")))?;
     }
-    println!("end `everything_else` lookup");
 
     // After we advanced our inode_number for every 
     // `component` in `everything_else`, read that last
     // dir and read `final_component`'s inode from it
-    println!("reading dir final_component '{final_component}' from inode {inode_number}");
     let dir = self.read_as_dir_i(inode_number)?;
-    println!("dir: {dir}");
     dir.entries
       .get(&final_component)
       .map(|entry| self.read_inode(entry.inode_number).into())
@@ -622,8 +610,6 @@ impl Filesystem for E5FSFilesystem {
     //
     // // fn find_dir(e5fs: &E5FSFilesystem, components: &[String], inode: &INode) -> Result<INode, Errno> {
     // //   // TODO: pass inode to read_dir_from_inode
-    // //   println!("find_dir: components:   {components:?}");
-    // //   println!("find_dir: inode_number: {:?}", inode.number);
     // //   match &components[..] {
     // //     [] => {
     // //       Ok(inode.clone())
@@ -637,7 +623,6 @@ impl Filesystem for E5FSFilesystem {
     // //     // },
     // //     [component, components @ ..] => {
     // //       let dir = e5fs.read_dir_from_inode(inode.number)?;
-    // //       // println!("dir: {dir:#?}");
     // //
     // //       match dir.entries.get(&*component) {
     // //         Some(directory_entry) => {
@@ -671,8 +656,6 @@ impl Filesystem for E5FSFilesystem {
     // //   .collect();
     // let dir_inode = find_dir(self, everything_else)?;
     // let dir = self.read_dir_from_inode(dir_inode.number)?;
-    // println!("dir_inode_number: {}", dir_inode.number);
-    // println!("dir contents: {:?}", dir.entries);
     //
     // // Try to find file in directory and map its INode to VINode -
     // // "final component" part of `pathname`, then return it
@@ -757,7 +740,6 @@ impl E5FSFilesystem {
 
   fn write_dir_i(&mut self, dir: &Directory, inode_number: AddressSize) -> Result<INode, Errno> {
     // We know that we're getting wrong dir data at this point already
-    // println!("write_dir_i: {dir:#?}");
     // Convert `Directory` to bytes
     let entries_count_bytes = dir.entries_count.to_le_bytes().as_slice().to_owned();
     let entries_bytes = dir.entries.iter().fold(Vec::new(), |mut bytes, (_name, entry)| {
@@ -787,7 +769,6 @@ impl E5FSFilesystem {
 
   fn read_as_dir_i(&self, inode_number: AddressSize) -> Result<Directory, Errno> {
     let dir_bytes = self.read_data_i(inode_number)?;
-    // println!("{dir_bytes:?}");
     let directory = E5FSFilesystem::parse_directory(&self.fs_info, dir_bytes)?;
 
     Ok(directory)
@@ -824,9 +805,7 @@ impl E5FSFilesystem {
   }
 
   fn read_data_i(&self, inode_number: AddressSize) -> Result<Vec<u8>, Errno> {
-    println!("Reading data from inode: {inode_number}");
     let inode = self.read_inode(inode_number);
-    println!("  Read inode: {inode:#?}");
 
     let data = inode.direct_block_numbers
       .iter()
@@ -1411,7 +1390,6 @@ impl E5FSFilesystem {
         .or(Err(Errno::EILSEQ(String::from("can't parse entries_count from dir"))))?
       );
 
-    // println!("entries_count: {entries_count}");
 
     let mut entries = BTreeMap::new();
 
@@ -1427,7 +1405,6 @@ impl E5FSFilesystem {
       }
     }
 
-    // println!("entries: {entries:#?}");
     Ok(Directory::from(entries))
   }
 
@@ -1760,18 +1737,13 @@ use crate::{util::{mktemp, mkenxvd}, eunix::fs::NOBODY};
       dir.insert(bashrc_inode.number, ".bashrc").unwrap();
       dir
     };
-    // println!("test: writing dir nrv to inode {}", nrv_inode.number);
     e5fs.write_dir_i(&expected_nrv_directory, nrv_inode.number).unwrap();
 
     let read_nrv_directory = e5fs.read_as_dir_i(nrv_inode.number).unwrap();
     assert_eq!(expected_nrv_directory, read_nrv_directory, "nrv directory should contain all created files");
 
-    println!("rood_dir {}: {}", root_inode.number, e5fs.read_as_dir_i(root_inode.number).unwrap());
-    println!("home_dir {}: {}", home_inode.number, e5fs.read_as_dir_i(home_inode.number).unwrap());
-    println!("nrv_dir  {}: {}", nrv_inode.number, e5fs.read_as_dir_i(nrv_inode.number).unwrap());
 
     let first_fbl_block = E5FSFilesystem::parse_block_numbers_from_block(&e5fs.read_block(e5fs.fs_info.first_fbl_block_number));
-    // println!("{first_fbl_block:#?}");
     let read_nrv_vinode = e5fs.lookup_path("/home/nrv").unwrap();
     let read_bashrc_vinode = e5fs.lookup_path("/home/nrv/.bashrc").unwrap();
 
