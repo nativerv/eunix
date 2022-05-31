@@ -39,8 +39,11 @@ pub fn main() {
   os.kernel.mount("", "/bin", eunix::fs::FilesystemType::binfs).unwrap();
   os.kernel.mount("/dev/sda", "/", eunix::fs::FilesystemType::e5fs).unwrap();
 
-  os.kernel.vfs.create_dir("/mnt").unwrap();
-  os.kernel.vfs.create_dir("/mnt/eblan").unwrap();
+  // let eunix_inode = os.kernel.vfs.create_file("/mnt").unwrap();
+  let mnt_inode = os.kernel.vfs.create_dir("/mnt").unwrap();
+  // assert_eq!(mnt_inode.number, 1, "mnt_inode should be 1");
+  let mnt_eblan_inode = os.kernel.vfs.create_dir("/mnt/eblan").unwrap();
+  // assert_eq!(mnt_eblan_inode.number, 2, "mnt_eblan_inode should be 2");
 
   let binfs = os.kernel.vfs.mount_points.get_mut("/bin").unwrap().driver.as_any().downcast_mut::<BinFilesytem>().unwrap();
   binfs.create_dir("/eblan").unwrap();
@@ -92,23 +95,24 @@ pub fn main() {
       .split(ifs) // Split by IFS (space)
       .collect::<Vec<&str>>(); // Collect as [arg0, arg1, arg2, ...]
 
-    // Execute command
-    // args[0] - program (or builtin) pathname/name 
-    // args[1..] - arguments
+    /* Execute command
+     * args[0] - program (or builtin) pathname/name 
+     * args[1..] - arguments 
+    */
     match args[0] {
-      // Echo buintin
+      /* Echo buintin */
       "echo" => {
         let args = args[1..].join(" ");
         println!("{args}");
       },
 
-      // Cd buintin
+      /* Cd buintin */
       "cd" => {
         let pathname = args[1];
         
         match os.kernel.vfs.lookup_path(pathname) {
           Ok(vinode) => {
-            if vinode.mode.r#type() == FileModeType::Dir as u8 {
+            if vinode.mode.file_type() == FileModeType::Dir as u8 {
               pwd = pathname;
             } else {
               eprintln!("cd: not a directory: {pathname}")
@@ -123,10 +127,15 @@ pub fn main() {
         }
       },
 
-      // Exit buintin
+      /* Pwd (print working directory) buintin */
+      "pwd" => {
+        println!("{pwd}");
+      },
+
+      /* Exit buintin */
       "exit" => break,
 
-      // No builtin matched - run pathname
+      /* No builtin matched - run pathname */
       command => {
         // Calculate pathname
         // Match command against PATH: 

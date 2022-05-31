@@ -77,7 +77,7 @@ impl DeviceFilesystem {
       .get(0)
       .unwrap()
       .mode
-      .with_type(FileModeType::Dir as u8);
+      .with_file_type(FileModeType::Dir as u8);
     let rest_inodes = devices.devices
       .iter()
       .enumerate()

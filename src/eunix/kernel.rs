@@ -168,7 +168,7 @@ impl Kernel {
     let process_pathname = format!("/proc/{}", process.pid);
     let process_fd_pathname = format!("{}/fd", process_pathname);
     self.vfs.create_dir(&process_pathname)
-      .and_then(|_| self.vfs.create_dir(&process_fd_pathname));
+      .and_then(|_| self.vfs.create_dir(&process_fd_pathname))?;
 
     // Create /proc/{pid}/fd/0, /proc/{pid}/fd/1, /proc/{pid}/fd/2
     let stdin_pathname = format!("{}/{}", process_fd_pathname, 0);

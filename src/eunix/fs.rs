@@ -106,7 +106,7 @@ impl FileMode {
     u8::from_str_radix(&current[0..1], 2).expect(&format!("can't parse in free: {}", &current))
   }
   
-  pub fn r#type(&self) -> u8 {
+  pub fn file_type(&self) -> u8 {
     let mut current = format!("{:016b}", self.0);
 
     u8::from_str_radix(&current[4..7], 2).expect(&format!("can't parse in type: {}", &current))
@@ -138,7 +138,7 @@ impl FileMode {
     Self(u16::from_str_radix(&current, 2).expect(&format!("can't parse in free: {}", &current)))
   }
   
-  pub fn with_type(&self, mask: u8) -> Self {
+  pub fn with_file_type(&self, mask: u8) -> Self {
     let mut current = format!("{:016b}", self.0);
     let mask = format!("{:03b}", mask);
 
@@ -334,7 +334,7 @@ impl VINode {
     Self {
       mode: FileMode::zero()
         .with_free(0)
-        .with_type(Devtype::Char as u8)
+        .with_file_type(Devtype::Char as u8)
         .with_user(0b111)
         .with_group(0b000)
         .with_others(0b000),
@@ -404,14 +404,10 @@ impl Filesystem for VFS {
 
   fn create_dir(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
-      let vinode = self.create_file(pathname)?;
-      let stat = self.stat(pathname)?;
-      
-      // Should be fine at that point?
-      self.change_mode(pathname, stat.mode.with_type(FileModeType::Dir as u8));
-
-      Ok(vinode)
-    }
+    let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
+    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::create_dir: we know that mount_point exist");  
+    mounted_fs.driver.create_dir(&internal_pathname)
+  }
 
   fn read_file(&mut self, pathname: &str, _count: AddressSize)
     -> Result<Vec<u8>, Errno> {
@@ -434,7 +430,7 @@ impl Filesystem for VFS {
 
     // Guard for Not a directory
     match mounted_fs.driver.stat(&internal_pathname)? {
-      stat if stat.mode.r#type() != FileModeType::Dir as u8 
+      stat if stat.mode.file_type() != FileModeType::Dir as u8 
         => return Err(Errno::ENOTDIR(String::from("read_dir: not a directory"))),
       _ => (),
     }
@@ -549,6 +545,10 @@ impl fmt::Display for FilesystemType {
 }
 
 impl VFS {
+  pub fn parent_dir(pathname: &str) -> Result<String, Errno> {
+    let (everything_else, final_component) = VFS::split_path(pathname)?;
+    Ok(format!("/{}", everything_else.join("/")))
+  }
   pub fn add_open_file(&mut self, pathname: &str, file_description: &FileDescription) -> Result<(), Errno> {
     self.open_files.insert(pathname.to_owned(), file_description.clone());
 
@@ -563,7 +563,6 @@ impl VFS {
   pub fn match_mount_point(&self, pathname: &str)
     -> Result<(String, String), Errno> 
   {
-    // println!("pathname_match_mount_point_begin: {pathname}");
     let (mount_point, _mounted_fs) = self.mount_points
       .iter()
       .sorted_by(|(key1, _), (key2, _)| key1.len().cmp(&key2.len()))
@@ -587,6 +586,7 @@ impl VFS {
     // Add leading slash - required by (my) standart
     let internal_pathname = format!("/{}", internal_pathname);
 
+
     Ok((mount_point.to_owned(), internal_pathname))
   }
 
@@ -598,12 +598,12 @@ impl VFS {
     // Guard for empty `pathname`
     match &pathname {
       pathname if pathname.chars().count() == 0 => { 
-        return Err(Errno::EINVAL(String::from("fs::split_path: zero-length path")))
+        return Err(Errno::EINVAL(String::from("zero-length path")))
       },
       pathname if pathname
         .chars()
         .nth(0)
-        .unwrap() != '/' => return Err(Errno::EINVAL(String::from("fs::split_path: path must start with '/'"))),
+        .unwrap() != '/' => return Err(Errno::EINVAL(String::from("path must start with '/'"))),
       _ => (),
     };
 
@@ -662,7 +662,7 @@ use super::*;
 
     let filemode = FileMode::zero()
       .with_free(0b1)
-      .with_type(0b011)
+      .with_file_type(0b011)
       .with_user(0b101)
       .with_group(0b110)
       .with_others(0b001);
@@ -719,35 +719,35 @@ mod vfs_split_path_tests {
   #[test]
   fn split_path_zero_length() {
     match VFS::split_path("") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("fs::split_path: zero-length path"))),
+      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("zero-length path"))),
       _ => unreachable!(),
     };
   }
   #[test]
   fn split_path_invalid_1() {
     match VFS::split_path("test1") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("fs::split_path: path must start with '/'"))),
+      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("path must start with '/'"))),
       _ => unreachable!(),
     };
   }
   #[test]
   fn split_path_invalid_1_trailing() {
     match VFS::split_path("test1/") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("fs::split_path: path must start with '/'"))),
+      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("path must start with '/'"))),
       _ => unreachable!(),
     };
   }
   #[test]
   fn split_path_invalid_2() {
     match VFS::split_path("test1/test2") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("fs::split_path: path must start with '/'"))),
+      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("path must start with '/'"))),
       _ => unreachable!(),
     };
   }
   #[test]
   fn split_path_invalid_3() {
     match VFS::split_path("test1/test2/test3") {
-      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("fs::split_path: path must start with '/'"))),
+      Err(errno) => assert_eq!(errno, Errno::EINVAL(String::from("path must start with '/'"))),
       _ => unreachable!(),
     };
   }

@@ -417,22 +417,17 @@ pub struct E5FSFilesystem {
 impl Filesystem for E5FSFilesystem {
   fn create_file(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
-    // Regex matching final_component of path (+ leading slash)
-    let (everything_else, final_component) = VFS::split_path(pathname)?;
-    // NOTICE: there may be problems/conflicts with leading `/` insertion
-    //         in intermediate path representations
-    //         see: `Filesystem::lookup_path` implementations,
-    //              `VFS::match_mount_point`
-    let parent_pathname = format!("/{}", everything_else.join("/"));
+    let (_, final_component) = VFS::split_path(pathname)?;
+    let parent_pathname = VFS::parent_dir(pathname)?;
 
     // Get dir path with this regex
     let parent_inode = self.lookup_path(parent_pathname.as_str())?;
 
     // Read dir from disk
-    let mut dir = self.read_as_dir_i(parent_inode.number)?;
+    let mut parent_dir = self.read_as_dir_i(parent_inode.number)?;
 
     // Guard for file already existing
-    if let Some(_) = dir.entries.get(&final_component)
+    if let Some(_) = parent_dir.entries.get(&final_component)
     {
       return Err(Errno::EINVAL(format!("e5fs::create_file: file {final_component} already exists in {parent_pathname}")));
     }
@@ -441,16 +436,17 @@ impl Filesystem for E5FSFilesystem {
     let (_, inode) = self.allocate_file()?;
 
     // Push allocated to dir
-    dir.insert(inode.number, final_component.as_str())?;
+    parent_dir.insert(inode.number, final_component.as_str())?;
 
     // Write dir
-    self.write_dir_i(&dir, parent_inode.number)?;
+    self.write_dir_i(&parent_dir, parent_inode.number)?;
 
     // Set inode's links count to 1 (link from parent dir)
     self.write_links_count_i(inode.number, 1)?;
 
     // Read new inode before returning, just to be sure
     // that we got correct sizes and all that crap
+    //
     let inode = self.read_inode(inode.number);
     Ok(inode.into())
   }
@@ -469,7 +465,7 @@ impl Filesystem for E5FSFilesystem {
     self.write_dir_i(&dir, vinode.number)?;
 
     // Change inode mode to be of type `Dir`
-    self.write_mode_i(vinode.number, vinode.mode.with_type(FileModeType::Dir as u8))?;
+    self.write_mode_i(vinode.number, vinode.mode.with_file_type(FileModeType::Dir as u8))?;
 
     // Set links count of new inode
     // to 2 (self-reference and reference by a parent dir)
@@ -496,6 +492,21 @@ impl Filesystem for E5FSFilesystem {
 
   fn read_dir(&self, pathname: &str)
     -> Result<VDirectory, Errno> {
+    // // Guard for file_type = directory
+    // match vinode
+    //   .mode
+    //   .file_type()
+    //   .try_into()
+    //   .unwrap()
+    // {
+    //   FileModeType::Dir => {
+    //     Ok(self.read_as_dir_i(vinode.number)?.into())
+    //   },
+    //   _ => {
+    //     Err(Errno::ENOTDIR(format!("e5fs::read_dir: not a directory: {pathname}")))
+    //   }
+    // }
+    //
     let inode_number = self.lookup_path(pathname)?.number;
     let dir = self.read_as_dir_i(inode_number)?;
 
@@ -596,22 +607,18 @@ fn as_any(&mut self) -> &mut dyn Any {
 impl E5FSFilesystem {
   /// Read filesystem from device (file on host) path
   pub fn from(device_realpath: &str) -> Result<Self, Errno> {
-    let Superblock {
-      inode_table_percentage,
-      block_data_size,
-      ..
-    } = E5FSFilesystem::read_superblock(device_realpath);
+    let superblock = E5FSFilesystem::read_superblock(device_realpath);
 
-    let mut fs_info = 
+    let fs_info = 
       E5FSFilesystemBuilder::new(
         device_realpath, 
-        inode_table_percentage, 
-        block_data_size
+        superblock.inode_table_percentage, 
+        superblock.block_data_size,
       )
       .unwrap();
 
     Ok(Self {
-      superblock: Superblock::new(&mut fs_info),
+      superblock,
       fs_info,
     })
   }
@@ -646,11 +653,21 @@ impl E5FSFilesystem {
     root_dir.insert(root_inode_number, ".").expect("this should succeed");
     e5fs.write_dir_i(&root_dir, root_inode_number)?;
 
-    // Set time to root inode
+    // Set mode, time, link count, gid and uid to root inode
     let mut root_inode = e5fs.read_inode(root_inode_number);
+    root_inode.mode = FileMode::zero()
+      .with_free(0)
+      .with_file_type(FileModeType::Dir as u8)
+      .with_user(0o7)
+      .with_group(0o5)
+      .with_others(0o5);
     root_inode.atime = unixtime();
     root_inode.mtime = unixtime();
     root_inode.ctime = unixtime();
+    root_inode.btime = unixtime();
+    root_inode.links_count = 2;
+    root_inode.uid = 0;
+    root_inode.gid = 0;
     e5fs.write_inode(&root_inode, root_inode_number)?;
 
     Ok(e5fs)
@@ -763,65 +780,32 @@ impl E5FSFilesystem {
 
   /// Replace specified inode in `free_inode_numbers` with `NO_ADDRESS`
   fn claim_free_inode(&mut self) -> Result<AddressSize, Errno> {
-    let free_inode_numbers_stub = self.superblock.free_inode_numbers.clone();
-    let maybe_free_inode_numbers = free_inode_numbers_stub
+    let (index, inode_number) = self
+      .superblock
+      .free_inode_numbers
+      .clone()
       .iter()
-      .find(|&&inode_number| inode_number != NO_ADDRESS);
+      .enumerate()
+      .find(|(_, inode_number)| **inode_number != NO_ADDRESS)
+      .map(|(index, inode_number)| (index, *inode_number))
+      .ok_or(Errno::ENOSPC(format!("no free inodes left (in cache, todo: fix me)")))?;
 
-    let free_inode_number = match maybe_free_inode_numbers {
-      Some(free_inode_number) => *free_inode_number,
-      None => {
-        let free_inode_nums = (0..self.fs_info.inodes_count)
-          .filter(|&inode_number| {
-            let inode = self.read_inode(inode_number);
-            match inode.mode.free() {
-              0 => false,
-              1 => true,
-              _ => panic!("INode::mode::free() is not 1 or 0 (was {})", inode.mode.free())
-            }
-          })
-        // Take one in excess so we can use it immideately 
-        .take(free_inode_numbers_stub.len())
-        .collect::<Vec<AddressSize>>();
+    // Replace and write inode number in superblock with NO_ADDRESS
+    *self
+      .superblock
+      .free_inode_numbers
+      .get_mut(index)
+      .ok_or(
+        Errno::EIO(format!("e5fs::claim_free_inode: cannot index free_inode_numbers sith {index}: this should not happen"))
+      )? = NO_ADDRESS;
+    self.write_superblock(&self.superblock.clone())?;
 
-        // Write rest inode_numbers to cache
-        self.superblock.free_inode_numbers = free_inode_nums[0..].try_into().unwrap();
-
-        // Return excess one
-        free_inode_nums[0] 
-      }
-    };
-
-    // Find 
-    let free_inode_idx_in_sb = self.superblock.free_inode_numbers
-      .iter()
-      .zip(0..)
-      .find_map(|(&inode_number, index)| {
-        if inode_number == free_inode_number {
-          Some(index)
-        } else {
-          None
-        }
-      }).expect("claim_free_inode: specified inode is not present in superblock.free_inode_numbers");
-
-    // Replace inode number in superblock with NO_ADDRESS
-    self.superblock.free_inode_numbers[free_inode_idx_in_sb as usize] = NO_ADDRESS;
-
-    // Write changed superblock to disk
-    self
-      .write_superblock(&self.superblock.clone())
-      .expect("claim_free_inode: cannot write superblock in use_inode");
-
-    // Get inode from disk, change it to be not free
-    let mut inode = self.read_inode(free_inode_number);
+    // Write mode to not free
+    let mut inode = self.read_inode(inode_number);
     inode.mode = inode.mode.with_free(0);
+    self.write_inode(&inode, inode_number)?;
 
-    // Write changed inode to disk
-    self
-      .write_inode(&inode, free_inode_number)
-      .expect("claim_free_inode: cannot write claimed inode");
-    
-    Ok(free_inode_number)
+    Ok(inode_number)
   }
 
   /// Release specified inode
@@ -831,11 +815,7 @@ impl E5FSFilesystem {
     inode.mode = inode.mode.with_free(1);
 
     // Write changed inode to disk
-    self
-      .write_inode(&inode, inode_number)
-      .expect("cannot write released inode");
-    
-    Ok(())
+    self.write_inode(&inode, inode_number)
   }
 
   /// Returns block number, which is also an index into `fbl`.
@@ -888,7 +868,7 @@ impl E5FSFilesystem {
   /// Returns:
   /// ENOENT -> if no free block or inode exists
   fn allocate_file(&mut self) -> Result<(AddressSize, INode), Errno> {
-    let free_inode_number = self.claim_free_inode()?;
+    let inode_number = self.claim_free_inode()?;
 
     let mut inode = INode {
       mode: FileMode::default().with_free(0),
@@ -896,22 +876,23 @@ impl E5FSFilesystem {
       file_size: 0,
       uid: NOBODY,
       gid: NOBODY,
-      atime: 0,
-      mtime: 0,
-      ctime: 0,
-      number: free_inode_number,
+      atime: unixtime(),
+      mtime: unixtime(),
+      ctime: unixtime(),
+      btime: unixtime(),
+      number: inode_number,
       ..Default::default()
     };
 
-    let free_block_number = self.claim_free_block()?;
-    inode.direct_block_numbers[0] = free_block_number;
+    let block_number = self.claim_free_block()?;
+    inode.direct_block_numbers[0] = block_number;
 
-    self.write_inode(&inode, free_inode_number)?;
+    self.write_inode(&inode, inode_number)?;
     self.write_block(&Block {
       data: vec![0; self.fs_info.block_data_size as usize],
-    }, free_inode_number)?;
+    }, inode_number)?;
 
-    Ok((free_inode_number, inode))
+    Ok((inode_number, inode))
   }
   
   fn grow_file(&mut self, inode_number: AddressSize, blocks_count: AddressSize) -> Result<INode, Errno> {
@@ -1535,16 +1516,13 @@ use crate::{util::{mktemp, mkenxvd}, eunix::fs::NOBODY};
     mkenxvd("10M".to_owned(), tempfile.clone());
 
     let mut e5fs = E5FSFilesystem::mkfs(tempfile.as_str(), 0.05, 4096).unwrap();
-    // let mnt_vinode = e5fs.create_dir("/mnt").unwrap();
-    // let bin_vinode = e5fs.create_dir("/bin").unwrap();
-    // let home_vinode = e5fs.create_dir("/home").unwrap();
     let root_inode = e5fs.read_inode(0);
     let mnt_inode = e5fs.allocate_file().unwrap().1;
     let bin_inode = e5fs.allocate_file().unwrap().1;
     let home_inode = e5fs.allocate_file().unwrap().1;
-    e5fs.write_mode_i(home_inode.number, home_inode.mode.with_type(FileModeType::Dir as u8)).unwrap();
-    e5fs.write_mode_i(bin_inode.number, bin_inode.mode.with_type(FileModeType::Dir as u8)).unwrap();
-    e5fs.write_mode_i(mnt_inode.number, mnt_inode.mode.with_type(FileModeType::Dir as u8)).unwrap();
+    e5fs.write_mode_i(home_inode.number, home_inode.mode.with_file_type(FileModeType::Dir as u8)).unwrap();
+    e5fs.write_mode_i(bin_inode.number, bin_inode.mode.with_file_type(FileModeType::Dir as u8)).unwrap();
+    e5fs.write_mode_i(mnt_inode.number, mnt_inode.mode.with_file_type(FileModeType::Dir as u8)).unwrap();
     let mnt_inode = e5fs.read_inode(mnt_inode.number);
     let bin_inode = e5fs.read_inode(bin_inode.number);
     let home_inode = e5fs.read_inode(home_inode.number);
@@ -1562,17 +1540,19 @@ use crate::{util::{mktemp, mkenxvd}, eunix::fs::NOBODY};
     let read_root_directory = e5fs.read_as_dir_i(root_inode.number).unwrap();
     assert_eq!(expected_root_directory, read_root_directory, "root directory should contain all created files");
 
+    let read_root_vinode = e5fs.lookup_path("/").unwrap();
     let read_mnt_vinode = e5fs.lookup_path("/mnt").unwrap();
     let read_bin_vinode = e5fs.lookup_path("/bin").unwrap();
     let read_home_vinode = e5fs.lookup_path("/home").unwrap();
 
-    assert_eq!(read_mnt_vinode, mnt_inode.into(), "read_mnt_vinode should be equal to mnt_vinode");
-    assert_eq!(read_bin_vinode, bin_inode.into(), "read_bin_vinode should be equal to bin_vinode");
-    assert_eq!(read_home_vinode, home_inode.into(), "read_home_vinode should be equal to home_vinode");
+    assert_eq!(read_root_vinode.number, root_inode.number, "read_mnt_vinode should be equal to mnt_vinode");
+    assert_eq!(read_mnt_vinode.number, 1, "read_mnt_vinode should be equal to mnt_vinode");
+    assert_eq!(read_bin_vinode.number, 2, "read_bin_vinode should be equal to bin_vinode");
+    assert_eq!(read_home_vinode.number, 3, "read_home_vinode should be equal to home_vinode");
     
     let nrv_inode = {
       let nrv_inode = e5fs.allocate_file().unwrap().1;
-      e5fs.write_mode_i(nrv_inode.number, nrv_inode.mode.with_type(FileModeType::Dir as u8)).unwrap();
+      e5fs.write_mode_i(nrv_inode.number, nrv_inode.mode.with_file_type(FileModeType::Dir as u8)).unwrap();
       e5fs.read_inode(nrv_inode.number)
     };
     let bashrc_inode = e5fs.allocate_file().unwrap().1;
@@ -1600,7 +1580,6 @@ use crate::{util::{mktemp, mkenxvd}, eunix::fs::NOBODY};
 
     let read_nrv_directory = e5fs.read_as_dir_i(nrv_inode.number).unwrap();
     assert_eq!(expected_nrv_directory, read_nrv_directory, "nrv directory should contain all created files");
-
 
     let first_fbl_block = E5FSFilesystem::parse_block_numbers_from_block(&e5fs.read_block(e5fs.fs_info.first_fbl_block_number));
     let read_nrv_vinode = e5fs.lookup_path("/home/nrv").unwrap();
@@ -1704,6 +1683,7 @@ use crate::{util::{mktemp, mkenxvd}, eunix::fs::NOBODY};
     mkenxvd("1M".to_owned(), tempfile.clone());
 
     let mut e5fs = E5FSFilesystem::mkfs(tempfile.as_str(), 0.05, 4096).unwrap();
+    let mut e5fs = E5FSFilesystem::from(tempfile.as_str()).unwrap();
 
     let vinode = e5fs.create_file("/test1").unwrap();
     let vinode_from_disk: VINode = e5fs.read_inode(1).into();
@@ -1722,7 +1702,7 @@ use crate::{util::{mktemp, mkenxvd}, eunix::fs::NOBODY};
 
     // Change type to Dir
     let mut inode1 = e5fs.read_inode(vinode1.number);
-    inode1.mode = inode1.mode.with_type(FileModeType::Dir as u8);
+    inode1.mode = inode1.mode.with_file_type(FileModeType::Dir as u8);
     e5fs.write_inode(&inode1, inode1.number).unwrap();
 
     let vinode2 = e5fs.create_file("/test12/test2").unwrap();

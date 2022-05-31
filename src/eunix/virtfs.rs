@@ -422,7 +422,7 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
 
     fn is_dir(inode: VINode) -> bool {
       // TODO: critical bug: inode mode and... nevermind, the present is correct
-      let filetype = inode.mode.r#type();
+      let filetype = inode.mode.file_type();
       filetype == FileModeType::Dir as u8
     }
 
@@ -472,7 +472,7 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
   fn create_dir(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
     let vinode = self.create_file(pathname)?;
-    self.change_mode(pathname, vinode.mode.with_type(FileModeType::Dir as u8))?;
+    self.change_mode(pathname, vinode.mode.with_file_type(FileModeType::Dir as u8))?;
     self.write_payload(&Payload::Directory(Directory::new()), vinode.number)?;
 
     Ok(vinode)
@@ -495,7 +495,7 @@ impl<T: VirtFsFile> VirtFsFilesystem<T> {
     root_inode.mode = root_inode
       .mode
       .with_free(0)
-      .with_type(FileModeType::Dir as u8)
+      .with_file_type(FileModeType::Dir as u8)
     ;
     root_inode.payload_number = root_payload_number;
 
