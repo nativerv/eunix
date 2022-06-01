@@ -167,6 +167,11 @@ impl Filesystem for DeviceFilesystem {
     Err(Errno::EPERM(String::from("operation not permitted")))
   }
 
+  fn remove_file(&mut self, pathname: &str)
+    -> Result<(), Errno> {
+        todo!()
+    }
+
   fn create_dir(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
         todo!()
@@ -242,7 +247,7 @@ impl Filesystem for DeviceFilesystem {
     todo!()
   }
 
-  // Поиск файла в файловой системе. Возвращает INode файла.
+// Поиск файла в файловой системе. Возвращает INode файла.
   // Для VFS сначала матчинг на маунт-поинты и вызов lookup_path("/mount/point") у конкретной файловой системы;
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
   fn lookup_path(&self, pathname: &str) -> Result<VINode, Errno> {

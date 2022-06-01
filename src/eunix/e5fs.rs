@@ -452,6 +452,11 @@ impl Filesystem for E5FSFilesystem {
     Ok(inode.into())
   }
 
+  fn remove_file(&mut self, pathname: &str)
+    -> Result<(), Errno> {
+        todo!()
+    } 
+
   fn create_dir(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
     let vinode = self.create_file(pathname)?;
@@ -476,7 +481,7 @@ impl Filesystem for E5FSFilesystem {
     self.write_links_count_i(parent_vinode.number, parent_vinode.links_count + 1)?;
 
     Ok(vinode)
-  } 
+  }
 
   fn read_file(&mut self, pathname: &str, _count: AddressSize)
     -> Result<Vec<u8>, Errno> {
@@ -486,14 +491,14 @@ impl Filesystem for E5FSFilesystem {
     } else {
       self.read_data_i(vinode.number)
     }
-  }
+  } 
 
   fn write_file(&mut self, pathname: &str, data: &[u8])
     -> Result<VINode, Errno> {
     let inode_number = self.lookup_path(pathname)?.number;
     let new_vinode: VINode = self.write_data_i(data.to_owned(), inode_number, false)?.into();
     Ok(new_vinode)
-  } 
+  }
 
   fn read_dir(&self, pathname: &str)
     -> Result<VDirectory, Errno> {
@@ -553,6 +558,16 @@ impl Filesystem for E5FSFilesystem {
     -> Result<(), Errno> {
     let inode_number = self.lookup_path(pathname)?.number;
     self.write_mode_i(inode_number, mode)
+  } 
+
+  fn change_times(&mut self, pathname: &str, times: Times)
+    -> Result<(), Errno> {
+    let mut inode = self.read_inode(self.lookup_path(pathname)?.number);
+    inode.atime = times.atime;
+    inode.mtime = times.mtime;
+    inode.ctime = times.ctime;
+    inode.btime = times.btime;
+    self.write_inode(&inode, inode.number)
   }
 
   // Поиск файла в файловой системе. Возвращает INode фала.
@@ -598,25 +613,15 @@ impl Filesystem for E5FSFilesystem {
       .get(&final_component)
       .map(|entry| self.read_inode(entry.inode_number).into())
       .ok_or(Errno::ENOENT(format!("e5fs.lookup_path: no such file or directory {final_component} (get(final_component))")))
-  } 
+  }
 
   fn name(&self) -> String { 
     String::from("e5fs")
   }
 
-  fn as_any(&mut self) -> &mut dyn Any {
+fn as_any(&mut self) -> &mut dyn Any {
       self
-    }
-
-  fn change_times(&mut self, pathname: &str, times: Times)
-    -> Result<(), Errno> {
-    let mut inode = self.read_inode(self.lookup_path(pathname)?.number);
-    inode.atime = times.atime;
-    inode.mtime = times.mtime;
-    inode.ctime = times.ctime;
-    inode.btime = times.btime;
-    self.write_inode(&inode, inode.number)
-  } 
+    } 
 }
 
 impl E5FSFilesystem {

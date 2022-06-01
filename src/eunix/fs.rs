@@ -359,6 +359,9 @@ pub trait Filesystem {
   fn create_file(&mut self, pathname: &str)
     -> Result<VINode, Errno>;
 
+  fn remove_file(&mut self, pathname: &str)
+    -> Result<(), Errno>;
+
   fn create_dir(&mut self, pathname: &str)
     -> Result<VINode, Errno>;
 
@@ -403,6 +406,11 @@ impl Filesystem for VFS {
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::create_file: we know that mount_point exist");  
     mounted_fs.driver.create_file(&internal_pathname)
   }
+
+  fn remove_file(&mut self, pathname: &str)
+    -> Result<(), Errno> {
+        todo!()
+    }
 
   fn create_dir(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
@@ -475,7 +483,7 @@ impl Filesystem for VFS {
     String::from("vfs")
   }
 
-  fn as_any(&mut self) -> &mut dyn Any {
+fn as_any(&mut self) -> &mut dyn Any {
     self
   }
 }

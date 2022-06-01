@@ -95,6 +95,16 @@ impl Filesystem for BinFilesytem {
     self.virtfs.create_file(pathname)
   }
 
+  fn remove_file(&mut self, pathname: &str)
+    -> Result<(), Errno> {
+    todo!()
+  }
+
+  fn create_dir(&mut self, pathname: &str)
+    -> Result<super::fs::VINode, super::kernel::Errno> {
+    self.virtfs.create_dir(pathname)
+  }
+
   fn read_file(&mut self, pathname: &str, count: super::fs::AddressSize)
     -> Result<Vec<u8>, super::kernel::Errno> {
     self.virtfs.read_file(pathname, count)
@@ -120,6 +130,11 @@ impl Filesystem for BinFilesytem {
     self.virtfs.change_mode(pathname, mode)
   }
 
+  fn change_times(&mut self, pathname: &str, times: Times)
+    -> Result<(), Errno> {
+    todo!()
+  }
+
   fn lookup_path(&self, pathname: &str)
     -> Result<super::fs::VINode, super::kernel::Errno> {
     self.virtfs.lookup_path(pathname)
@@ -132,16 +147,6 @@ impl Filesystem for BinFilesytem {
   fn as_any(&mut self) -> &mut dyn std::any::Any {
     self
   }
-
-  fn create_dir(&mut self, pathname: &str)
-    -> Result<super::fs::VINode, super::kernel::Errno> {
-    self.virtfs.create_dir(pathname)
-  }
-
-fn change_times(&mut self, pathname: &str, times: Times)
-    -> Result<(), Errno> {
-        todo!()
-    }
 }
 
 // vim:ts=2 sw=2

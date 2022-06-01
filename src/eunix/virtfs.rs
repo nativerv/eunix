@@ -301,10 +301,6 @@ impl<T: VirtFsFile> VirtFsFilesystem<T> {
 }
 
 impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
-  fn as_any(&mut self) -> &mut dyn Any {
-    unimplemented!("virtfs: as_any for virtfs is undefined")
-  }
-
   fn create_file(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
     // Regex matching final_component of path (+ leading slash)
@@ -341,7 +337,21 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
     let file_inode = self.read_inode(file_inode_number)?;
 
     Ok(file_inode.into())
-  } 
+  }
+
+  fn remove_file(&mut self, pathname: &str)
+    -> Result<(), Errno> {
+        todo!()
+    } 
+
+  fn create_dir(&mut self, pathname: &str)
+    -> Result<VINode, Errno> {
+    let vinode = self.create_file(pathname)?;
+    self.change_mode(pathname, vinode.mode.with_file_type(FileModeType::Dir as u8))?;
+    self.write_payload(&Payload::Directory(Directory::new()), vinode.number)?;
+
+    Ok(vinode)
+  }
 
   fn read_file(&mut self, pathname: &str, _count: AddressSize)
     -> Result<Vec<u8>, Errno> {
@@ -354,12 +364,12 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
         .as_bytes()
         .to_owned()
     )
-  }
+  } 
 
   fn write_file(&mut self, pathname: &str, data: &[u8])
     -> Result<VINode, Errno> {
       todo!("Accept callbacks for read and write from the instantiator")
-  } 
+  }
 
   fn read_dir(&self, pathname: &str)
     -> Result<VDirectory, Errno> {
@@ -404,6 +414,11 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
     -> Result<(), Errno> {
     let inode_number = self.lookup_path(pathname)?.number;
     self.write_mode(inode_number, mode)
+  } 
+
+  fn change_times(&mut self, pathname: &str, times: Times)
+    -> Result<(), Errno> {
+    todo!()
   }
 
   // Поиск файла в файловой системе. Возвращает INode фала.
@@ -464,24 +479,14 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
         .and_then(|entry| self.read_inode(entry.inode_number))?
         .into()
     )
-  } 
+  }
 
   fn name(&self) -> String { 
     self.name().clone()
   }
 
-  fn create_dir(&mut self, pathname: &str)
-    -> Result<VINode, Errno> {
-    let vinode = self.create_file(pathname)?;
-    self.change_mode(pathname, vinode.mode.with_file_type(FileModeType::Dir as u8))?;
-    self.write_payload(&Payload::Directory(Directory::new()), vinode.number)?;
-
-    Ok(vinode)
-  }
-
-  fn change_times(&mut self, pathname: &str, times: Times)
-    -> Result<(), Errno> {
-    todo!()
+  fn as_any(&mut self) -> &mut dyn Any {
+    unimplemented!("virtfs: as_any for virtfs is undefined")
   } 
 }
 
