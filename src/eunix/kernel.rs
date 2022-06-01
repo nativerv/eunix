@@ -10,6 +10,16 @@ use super::virtfs::{VirtFsFilesystem, Payload};
 
 pub type Args = Vec<String>;
 pub type UnixtimeSize = u64;
+pub struct Times {
+  /// Last access time
+  pub atime: UnixtimeSize,
+  /// Last contents change time
+  pub mtime: UnixtimeSize,
+  /// Last inode change time
+  pub ctime: UnixtimeSize,
+  /// Birth (creation) time (non-standard)
+  pub btime: UnixtimeSize,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Errno {
@@ -231,8 +241,8 @@ impl Kernel {
 impl Kernel {
   pub fn exec(&mut self, pathname: &str, argv: &[&str]) -> Result<AddressSize, Errno> {
     let (mount_point, internal_pathname) = self.vfs.match_mount_point(pathname)?;
-    println!("[{KERNEL_MESSAGE_HEADER_ERR}]: mount_point: {mount_point}");
-    println!("[{KERNEL_MESSAGE_HEADER_ERR}]: internal_pathname: {internal_pathname}");
+    // println!("[{KERNEL_MESSAGE_HEADER_ERR}]: mount_point: {mount_point}");
+    // println!("[{KERNEL_MESSAGE_HEADER_ERR}]: internal_pathname: {internal_pathname}");
 
     match self
       .vfs
@@ -352,7 +362,7 @@ impl Kernel {
             .downcast_ref::<DeviceFilesystem>()
             .expect("we know that mounted_fs.driver === instanceof DeviceFilesystem");
 
-          devfs.device_by_path(&internal_path)?
+          devfs.device_by_pathname(&internal_path)?
         } else {
           return Err(Errno::EINVAL(String::from("source is not a device")));
         };

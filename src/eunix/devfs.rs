@@ -8,7 +8,7 @@ use crate::eunix::fs::Filesystem;
 use crate::util::unixtime;
 
 use super::fs::{AddressSize, VDirectoryEntry, VINode, VDirectory, VFS, FileMode, FileStat, FileModeType};
-use super::kernel::{Errno, KernelDeviceTable, UnixtimeSize};
+use super::kernel::{Errno, KernelDeviceTable, UnixtimeSize, Times};
 
 pub struct DirectoryEntry<'a> {
   inode_address: AddressSize,
@@ -59,29 +59,30 @@ pub struct Superblock {
   free_blocks: [AddressSize; 16],
 }
 
-pub struct Block<'a> {
-  is_free: bool,
-  data: &'a [u8],
-  next_block: AddressSize,
-}
-
 pub struct DeviceFilesystem {
   device_table: KernelDeviceTable,
   inodes: Vec<INode>,
 }
 
 impl DeviceFilesystem {
-  pub fn new(devices: &KernelDeviceTable) -> Self {
-    let mut root_inode = vec![INode::default()];
-    root_inode.get_mut(0).unwrap().mode = root_inode
-      .get(0)
-      .unwrap()
-      .mode
-      .with_file_type(FileModeType::Dir as u8);
-    let rest_inodes = devices.devices
+  pub fn new(device_table: &KernelDeviceTable) -> Self {
+    let inodes = vec![INode {
+      mode: FileMode::new(0b0_000_001_111_101_101),
+      links_count: 2,
+      file_size: 0,
+      uid: 0,
+      gid: 0,
+      atime: unixtime(),
+      mtime: unixtime(),
+      ctime: unixtime(), 
+      btime: unixtime(), 
+      number: 0,
+    }];
+    let rest_inodes = device_table
+      .devices
       .iter()
       .enumerate()
-      .map(|(device_number, (_path, _device))| INode {
+      .map(|(device_number, (_path, (dev_type, _1)))| INode {
         //    free?
         ///   | unused
         ///   | |   filetype
@@ -97,7 +98,12 @@ impl DeviceFilesystem {
         ///   001 - dir    101 - unused
         ///   010 - sys    110 - unused
         ///   011 - block  111 - unused
-        mode: FileMode::new(0b0_000_000_111_000_000),
+        mode: FileMode::new(0b0_000_011_110_000_000).with_file_type(
+          match dev_type {
+            VirtualDeviceType::BlockDevice => FileModeType::Block,
+            VirtualDeviceType::TTYDevice => FileModeType::Char,
+          } as u8
+        ),
         links_count: 1,
         file_size: 0,
         uid: 0,
@@ -109,13 +115,13 @@ impl DeviceFilesystem {
         number: device_number as AddressSize + 1,
       }).collect::<Vec<INode>>();
 
-    let inodes = root_inode
+    let inodes = inodes
       .into_iter()
       .chain(rest_inodes.into_iter())
       .collect();
 
     Self {
-      device_table: devices.clone(),
+      device_table: device_table.clone(),
       inodes,
     }
   }
@@ -146,7 +152,7 @@ impl DeviceFilesystem {
       .collect()
   }
 
-  pub(crate) fn device_by_path(&self, pathname: &str) -> Result<String, Errno> {
+  pub(crate) fn device_by_pathname(&self, pathname: &str) -> Result<String, Errno> {
     let (_everything_else, final_component) = VFS::split_path(pathname)?;
     let device_names = self.device_names();
     let realpath = device_names.get(&final_component).ok_or(Errno::ENOENT(String::from("no device corresponds to that name")))?;
@@ -175,23 +181,19 @@ impl Filesystem for DeviceFilesystem {
   }
 
   fn read_dir(&self, pathname: &str) -> Result<VDirectory, Errno> {
-    let mut tty_devices_count = 0;
-    let mut block_devices_count = 0;
-
-    let (everything_else, _) = VFS::split_path(pathname)?;
-
     // TODO: FIXME: remove /. when .. and . is implemented 
-    if pathname != "/" && pathname != "/." { // OLD
+    if pathname != "/" && pathname != "/." && pathname != "/.." { // OLD
     // if pathname != "/" {
       return Err(Errno::ENOENT(String::from("no such file or directory")))
     }
 
     Ok(
       VDirectory {
-        entries: self.device_names()
+        entries: self
+          .device_names()
           .iter()
-          .enumerate()
-          .map(|(device_number, (name, _))| {
+          .zip(1..)
+          .map(|((name, _), device_number)| {
             (name.to_owned(), VDirectoryEntry::new(device_number as AddressSize, name))
           })
           .collect()
@@ -235,27 +237,33 @@ impl Filesystem for DeviceFilesystem {
     Err(Errno::EPERM(String::from("operation not permitted")))
   }
 
+  fn change_times(&mut self, pathname: &str, times: Times)
+    -> Result<(), Errno> {
+    todo!()
+  }
+
   // Поиск файла в файловой системе. Возвращает INode файла.
   // Для VFS сначала матчинг на маунт-поинты и вызов lookup_path("/mount/point") у конкретной файловой системы;
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
   fn lookup_path(&self, pathname: &str) -> Result<VINode, Errno> {
-    let (everything_else, final_component) = VFS::split_path(pathname)?;
+    let (_, final_component) = VFS::split_path(pathname)?;
     let dir = self.read_dir("/")?; // TODO: FIXME: magic string
 
-    let inode_number = if final_component == "." {
+    let inode_number = if final_component == "/." || final_component == "/.." || final_component == "/" {
       0
     } else {
-      dir.entries.get(&final_component).ok_or(Errno::ENOENT(String::from("no such file or directory 2")))?.inode_number
+      dir
+        .entries
+        .get(&final_component).ok_or(Errno::ENOENT(String::from("no such file or directory 2")))?.inode_number
     };
-    
+
     self.inodes
-      .iter()
-      .find(|inode| inode.number == inode_number)
+      .get(inode_number as usize)
       .map(|&inode| inode.into())
       .ok_or(Errno::EIO(String::from("devfs::lookup_path: can't find inode from dir")))
   }
 
-  fn name(&self) -> String {
+fn name(&self) -> String {
     String::from("devfs")
   }
 

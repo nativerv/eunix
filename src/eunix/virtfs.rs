@@ -27,6 +27,7 @@ use super::fs::VDirectoryEntry;
 use super::fs::VINode;
 use super::fs::VFS;
 use super::kernel::Errno;
+use super::kernel::Times;
 use super::kernel::UnixtimeSize;
 
 pub trait VirtFsFile = Clone + Default + fmt::Display;
@@ -476,6 +477,11 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
     self.write_payload(&Payload::Directory(Directory::new()), vinode.number)?;
 
     Ok(vinode)
+  }
+
+  fn change_times(&mut self, pathname: &str, times: Times)
+    -> Result<(), Errno> {
+    todo!()
   } 
 }
 

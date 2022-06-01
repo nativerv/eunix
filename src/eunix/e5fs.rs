@@ -28,6 +28,7 @@ use super::fs::VDirectoryEntry;
 use super::fs::VINode;
 use super::fs::VFS;
 use super::kernel::Errno;
+use super::kernel::Times;
 
 struct FindFblBlockResult {
   fbl_block_number: AddressSize,
@@ -479,8 +480,12 @@ impl Filesystem for E5FSFilesystem {
 
   fn read_file(&mut self, pathname: &str, _count: AddressSize)
     -> Result<Vec<u8>, Errno> {
-    let inode_number = self.lookup_path(pathname)?.number;
-    self.read_data_i(inode_number)
+    let vinode = self.lookup_path(pathname)?;
+    if vinode.mode.file_type() == FileModeType::Dir as u8 {
+      Err(Errno::EISDIR(format!("read_file: {pathname}: is a directory")))
+    } else {
+      self.read_data_i(vinode.number)
+    }
   }
 
   fn write_file(&mut self, pathname: &str, data: &[u8])
@@ -599,8 +604,18 @@ impl Filesystem for E5FSFilesystem {
     String::from("e5fs")
   }
 
-fn as_any(&mut self) -> &mut dyn Any {
-    self
+  fn as_any(&mut self) -> &mut dyn Any {
+      self
+    }
+
+  fn change_times(&mut self, pathname: &str, times: Times)
+    -> Result<(), Errno> {
+    let mut inode = self.read_inode(self.lookup_path(pathname)?.number);
+    inode.atime = times.atime;
+    inode.mtime = times.mtime;
+    inode.ctime = times.ctime;
+    inode.btime = times.btime;
+    self.write_inode(&inode, inode.number)
   } 
 }
 

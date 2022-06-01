@@ -10,7 +10,7 @@ mod binaries;
 use fancy_regex::Regex;
 use machine::{Machine, OperatingSystem};
 use std::io::*;
-use crate::{eunix::{e5fs::*, fs::{Filesystem, FileModeType, VFS}, kernel::{KERNEL_MESSAGE_HEADER_ERR, KernelParams, Errno}, binfs::BinFilesytem}, machine::VirtualDeviceType};
+use crate::{eunix::{e5fs::*, fs::{Filesystem, FileModeType, VFS}, kernel::{KERNEL_MESSAGE_HEADER_ERR, KernelParams, Errno}, binfs::BinFilesytem}, machine::VirtualDeviceType, binaries::EXIT_SUCCESS};
 use std::path::Path;
 
 pub fn main() {
@@ -50,42 +50,45 @@ pub fn main() {
   binfs.create_file("/eblan/ls").unwrap();
 
   binfs.add_bins(vec![
-    (String::from("/ls"),           binaries::ls),
-    (String::from("/stat"),         binaries::stat),
-    (String::from("/df"),           binaries::df),
-    (String::from("/du"),           binaries::du),
-    (String::from("/cat"),          binaries::cat),
-    (String::from("/mkfs.e5fs"),    binaries::mkfs_e5fs),
-    (String::from("/mkdir"),        binaries::mkdir),
-    (String::from("/rmdir"),        binaries::rmdir),
-    (String::from("/touch"),        binaries::touch),
-    (String::from("/rm"),           binaries::rm),
-    (String::from("/mv"),           binaries::mv),
-    (String::from("/cp"),           binaries::cp),
-    (String::from("/chmod"),        binaries::chmod),
-    (String::from("/chown"),        binaries::chown),
-    (String::from("/uname"),        binaries::uname),
-    (String::from("/id"),           binaries::id),
-    (String::from("/whoami"),       binaries::whoami),
-    (String::from("/su"),           binaries::su),
-    (String::from("/useradd"),      binaries::useradd),
-    (String::from("/usermod"),      binaries::usermod),
-    (String::from("/userdel"),      binaries::userdel),
-    (String::from("/groupmod"),     binaries::groupmod),
-    (String::from("/groupdel"),     binaries::groupdel),
+    (String::from("/ls"),           binaries::ls),        // [x]
+    (String::from("/stat"),         binaries::stat),      // [x]
+    (String::from("/df"),           binaries::df),        // [ ]
+    (String::from("/du"),           binaries::du),        // [ ]
+    (String::from("/cat"),          binaries::cat),       // [x]
+    (String::from("/mkfs.e5fs"),    binaries::mkfs_e5fs), // [x]
+    (String::from("/mkdir"),        binaries::mkdir),     // [x]
+    (String::from("/rmdir"),        binaries::rmdir),     // [ ]
+    (String::from("/touch"),        binaries::touch),     // [x]
+    (String::from("/rm"),           binaries::rm),        // [ ]
+    (String::from("/mv"),           binaries::mv),        // [ ]
+    (String::from("/cp"),           binaries::cp),        // [ ]
+    (String::from("/chmod"),        binaries::chmod),     // [ ]
+    (String::from("/chown"),        binaries::chown),     // [ ]
+    (String::from("/uname"),        binaries::uname),     // [ ]
+    (String::from("/mount"),        binaries::mount),     // [x]
+    (String::from("/lsblk"),        binaries::lsblk),     // [x]
+    (String::from("/id"),           binaries::id),        // [ ]
+    (String::from("/whoami"),       binaries::whoami),    // [ ]
+    (String::from("/su"),           binaries::su),        // [ ]
+    (String::from("/useradd"),      binaries::useradd),   // [ ]
+    (String::from("/usermod"),      binaries::usermod),   // [ ]
+    (String::from("/userdel"),      binaries::userdel),   // [ ]
+    (String::from("/groupmod"),     binaries::groupmod),  // [ ]
+    (String::from("/groupdel"),     binaries::groupdel),  // [ ]
   ]).expect("we know that we have enough inodes and there is no dublicates");
 
-  let mut command = String::new();
-  loop {
-    // Shell vars
-    let mut ifs = ' ';
-    let mut ps1 = "# ";
-    let mut pwd = "/";
-    let mut path = "/usr/bin:/bin";
+  // Shell vars
+  let mut ifs = ' ';
+  let mut ps1 = String::from("(0) # ");
+  let mut pwd = String::from("/");
+  let mut path = String::from("/usr/bin:/bin");
 
+  let mut command = String::new();
+
+  loop {
     // A basic REPL prompt
     command.clear();
-    print!("{ps1}");
+    print!("{}", ps1);
     stdout().flush().unwrap();
     stdin().read_line(&mut command).unwrap();
 
@@ -113,7 +116,7 @@ pub fn main() {
         match os.kernel.vfs.lookup_path(pathname) {
           Ok(vinode) => {
             if vinode.mode.file_type() == FileModeType::Dir as u8 {
-              pwd = pathname;
+              pwd = pathname.to_owned();
             } else {
               eprintln!("cd: not a directory: {pathname}")
             }
@@ -164,7 +167,13 @@ pub fn main() {
         // Execute calculated pathname
         match os.kernel.exec(&pathname, args.as_ref()) {
           Ok(exit_code) => {
-            println!("[{KERNEL_MESSAGE_HEADER_ERR}]: program finished with exit code {exit_code}");
+            // println!("[{KERNEL_MESSAGE_HEADER_ERR}]: program finished with exit code {exit_code}");
+            ps1 = if exit_code == EXIT_SUCCESS {
+              // format!("# ")
+              format!("({exit_code}) # ")
+            } else {
+              format!("({exit_code}) # ")
+            }
           },
           Err(Errno::ENOENT(_)) => {
             println!("sh: no such file or directory: {pathname}");

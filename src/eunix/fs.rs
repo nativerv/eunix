@@ -1,12 +1,11 @@
 use std::{collections::BTreeMap, any::Any, str::FromStr};
 use core::fmt::{Debug, self};
-
 use fancy_regex::Regex;
 use itertools::Itertools;
 
 use crate::util::{fixedpoint, unixtime};
 
-use super::kernel::{Errno, UnixtimeSize};
+use super::kernel::{Errno, UnixtimeSize, Times, KERNEL_MESSAGE_HEADER_ERR};
 
 pub type AddressSize = u32;
 pub type Id = u16;
@@ -378,6 +377,9 @@ pub trait Filesystem {
   fn change_mode(&mut self, pathname: &str, mode: FileMode)
     -> Result<(), Errno>;
 
+  fn change_times(&mut self, pathname: &str, times: Times)
+    -> Result<(), Errno>;
+
   // Поиск файла в файловой системе. Возвращает INode фала.
   // Для VFS сначала матчинг на маунт-поинты и вызов lookup_path("/mount/point") у конкретной файловой системы;
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
@@ -452,6 +454,13 @@ impl Filesystem for VFS {
     mounted_fs.driver.change_mode(&internal_pathname, mode)
   }
 
+  fn change_times(&mut self, pathname: &str, times: Times)
+    -> Result<(), Errno> {
+    let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
+    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::change_mode: we know that mount_point exist");  
+    mounted_fs.driver.change_times(&internal_pathname, times)
+  }
+
   // Поиск файла в файловой системе. Возвращает INode фала.
   // Для VFS сначала матчит на маунт-поинты и вызывает lookup_path("/internal/path") у конкретной файловой системы;
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
@@ -466,7 +475,7 @@ impl Filesystem for VFS {
     String::from("vfs")
   }
 
-fn as_any(&mut self) -> &mut dyn Any {
+  fn as_any(&mut self) -> &mut dyn Any {
     self
   }
 }
@@ -573,6 +582,7 @@ impl VFS {
         re.is_match(pathname).expect("fix yo regex nerd (is_match)")
       })
       .ok_or_else(|| Errno::ENOENT(String::from("VFS::lookup_path: no such file or directory")))?;
+    // println!("[{KERNEL_MESSAGE_HEADER_ERR}]: mount_point: {mount_point}");
 
     let regex = Regex::new(&format!("^{}", mount_point))
       .expect("VFS::match_mount_point: regex can't be invalid because of regex::escape");
@@ -585,7 +595,6 @@ impl VFS {
 
     // Add leading slash - required by (my) standart
     let internal_pathname = format!("/{}", internal_pathname);
-
 
     Ok((mount_point.to_owned(), internal_pathname))
   }

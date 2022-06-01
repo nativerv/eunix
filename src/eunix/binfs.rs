@@ -1,6 +1,6 @@
 use std::{fmt, rc::Rc, borrow::Borrow};
 
-use super::{fs::{Filesystem, AddressSize}, virtfs::{VirtFsFilesystem, Payload}, kernel::{Args, Kernel, Errno}};
+use super::{fs::{Filesystem, AddressSize}, virtfs::{VirtFsFilesystem, Payload}, kernel::{Args, Kernel, Errno, Times}};
 
 type BinaryFn = fn(Args, &mut Kernel) -> AddressSize;
 
@@ -137,6 +137,11 @@ impl Filesystem for BinFilesytem {
     -> Result<super::fs::VINode, super::kernel::Errno> {
     self.virtfs.create_dir(pathname)
   }
+
+fn change_times(&mut self, pathname: &str, times: Times)
+    -> Result<(), Errno> {
+        todo!()
+    }
 }
 
 // vim:ts=2 sw=2
