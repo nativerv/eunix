@@ -10,7 +10,7 @@ mod binaries;
 use fancy_regex::Regex;
 use machine::{Machine, OperatingSystem};
 use std::io::*;
-use crate::{eunix::{e5fs::*, fs::{Filesystem, FileModeType, VFS}, kernel::{KERNEL_MESSAGE_HEADER_ERR, KernelParams, Errno}, binfs::BinFilesytem}, machine::VirtualDeviceType, binaries::EXIT_SUCCESS};
+use crate::{eunix::{fs::{Filesystem, FileModeType}, kernel::{KERNEL_MESSAGE_HEADER_ERR, KernelParams, Errno}, binfs::BinFilesytem}, machine::VirtualDeviceType, binaries::EXIT_SUCCESS};
 use std::path::Path;
 
 pub fn main() {

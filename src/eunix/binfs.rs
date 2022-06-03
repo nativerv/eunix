@@ -130,6 +130,11 @@ impl Filesystem for BinFilesytem {
     self.virtfs.change_mode(pathname, mode)
   }
 
+  fn change_owners(&mut self, pathname: &str, uid: super::fs::Id, gid: super::fs::Id) 
+    -> Result<(), Errno> {
+    todo!()
+  }
+
   fn change_times(&mut self, pathname: &str, times: Times)
     -> Result<(), Errno> {
     todo!()
@@ -144,7 +149,7 @@ impl Filesystem for BinFilesytem {
     String::from("binfs")
   }
 
-  fn as_any(&mut self) -> &mut dyn std::any::Any {
+fn as_any(&mut self) -> &mut dyn std::any::Any {
     self
   }
 }

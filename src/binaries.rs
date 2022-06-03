@@ -8,8 +8,8 @@ use itertools::Itertools;
 use std::io::{Read, Write};
 
 use crate::eunix::devfs::DeviceFilesystem;
-use crate::eunix::fs::FilesystemType;
-use crate::eunix::kernel::Times;
+use crate::eunix::fs::{FilesystemType, VINode};
+use crate::eunix::kernel::{Times, ROOT_GID, ROOT_UID};
 use crate::util::{self, unixtime};
 use crate::{
   eunix::{
@@ -726,15 +726,76 @@ pub fn chmod(args: Args, kernel: &mut Kernel) -> AddressSize {
 pub fn chown(args: Args, kernel: &mut Kernel) -> AddressSize {
   #[derive(Debug, Parser)]
   struct BinArgs {
+    new_owners_string: String,
     pathname: String,
   }
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("chown: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => 0,
+    Ok(BinArgs { pathname, new_owners_string }) => {
+      let VINode {
+        uid,
+        gid,
+        ..
+      } = match kernel.vfs.lookup_path(&pathname) {
+        Ok(vinode) => vinode,
+        Err(Errno::ENOENT(_)) => {
+          println!("chown: {pathname}: No such file or directory");
+          return EXIT_ENOENT;
+        },
+        Err(errno) => {
+          println!("chown: unexpected error: {errno:?}");
+          return EXIT_FAILURE;
+        },
+      };
+
+      // Parse names - default to current
+      let user_name = new_owners_string
+        .split(":")
+        .nth(0)
+        .unwrap_or(kernel.uid_map.get(&kernel.current_uid).unwrap());
+      let group_name = new_owners_string
+        .split(":")
+        .nth(1)
+        .unwrap_or(kernel.uid_map.get(&kernel.current_gid).unwrap());
+
+      // Guard user
+      let uid = if let Some(uid) = kernel
+        .uid_map
+        .iter()
+        .find(|(_, name)| user_name == *name)
+        .map(|(id, _)| *id)
+      {
+        uid
+      } else {
+        println!("chown: invalid user: '{new_owners_string}'");
+        return EXIT_FAILURE;
+      };
+
+      // Guard group
+      let gid = if let Some(gid) = kernel
+        .gid_map
+        .iter()
+        .find(|(_, name)| group_name == *name)
+        .map(|(id, _)| *id)
+      {
+        gid
+      } else {
+        println!("chown: invalid group: '{new_owners_string}'");
+        return EXIT_FAILURE;
+      };
+
+      match kernel.vfs.change_owners(&pathname, uid, gid) {
+        Ok(_) => EXIT_SUCCESS,
+        Err(errno) => {
+          println!("chown: unexpected error: {errno:?}");
+          return EXIT_FAILURE;
+        },
+      }
+    },
   }
 }
 

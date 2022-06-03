@@ -56,8 +56,8 @@ pub enum Errno {
 }
 
 pub static KERNEL_MESSAGE_HEADER_ERR: &'static str = "\x1b[93mkernel\x1b[0m";
-const ROOT_UID: Id = 0;
-const ROOT_GID: Id = 0;
+pub const ROOT_UID: Id = 0;
+pub const ROOT_GID: Id = 0;
 
 #[derive(Debug, Clone)]
 pub struct Process {

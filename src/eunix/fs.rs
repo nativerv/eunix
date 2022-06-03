@@ -381,6 +381,9 @@ pub trait Filesystem {
   fn change_mode(&mut self, pathname: &str, mode: FileMode)
     -> Result<(), Errno>;
 
+  fn change_owners(&mut self, pathname: &str, uid: Id, gid: Id) 
+    -> Result<(), Errno>;
+
   fn change_times(&mut self, pathname: &str, times: Times)
     -> Result<(), Errno>;
 
@@ -465,6 +468,13 @@ impl Filesystem for VFS {
     mounted_fs.driver.change_mode(&internal_pathname, mode)
   }
 
+  fn change_owners(&mut self, pathname: &str, uid: Id, gid: Id) 
+    -> Result<(), Errno> {
+    let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
+    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::change_owners: we know that mount_point exist");  
+    mounted_fs.driver.change_owners(&internal_pathname, uid, gid)
+  }
+
   fn change_times(&mut self, pathname: &str, times: Times)
     -> Result<(), Errno> {
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
@@ -482,7 +492,7 @@ impl Filesystem for VFS {
     mounted_fs.driver.lookup_path(&internal_pathname)
   }
 
-  fn name(&self) -> String {
+fn name(&self) -> String {
     String::from("vfs")
   }
 

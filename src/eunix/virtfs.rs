@@ -416,6 +416,11 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
     self.write_mode(inode_number, mode)
   } 
 
+  fn change_owners(&mut self, pathname: &str, uid: Id, gid: Id) 
+    -> Result<(), Errno> {
+    todo!()
+  }
+
   fn change_times(&mut self, pathname: &str, times: Times)
     -> Result<(), Errno> {
     todo!()
@@ -485,7 +490,7 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
     self.name().clone()
   }
 
-  fn as_any(&mut self) -> &mut dyn Any {
+fn as_any(&mut self) -> &mut dyn Any {
     unimplemented!("virtfs: as_any for virtfs is undefined")
   } 
 }

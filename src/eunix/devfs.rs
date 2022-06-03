@@ -242,6 +242,11 @@ impl Filesystem for DeviceFilesystem {
     Err(Errno::EPERM(String::from("operation not permitted")))
   }
 
+  fn change_owners(&mut self, pathname: &str, uid: super::fs::Id, gid: super::fs::Id) 
+    -> Result<(), Errno> {
+    todo!()
+  }
+
   fn change_times(&mut self, pathname: &str, times: Times)
     -> Result<(), Errno> {
     todo!()

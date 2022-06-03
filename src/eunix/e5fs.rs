@@ -612,6 +612,15 @@ impl Filesystem for E5FSFilesystem {
     self.write_mode_i(inode_number, mode)
   } 
 
+  fn change_owners(&mut self, pathname: &str, uid: Id, gid: Id) 
+    -> Result<(), Errno> {
+    let mut inode = self.read_inode(self.lookup_path(pathname)?.number);
+    inode.uid = uid;
+    inode.gid = gid;
+
+    self.write_inode(&inode, inode.number)
+  }
+
   fn change_times(&mut self, pathname: &str, times: Times)
     -> Result<(), Errno> {
     let mut inode = self.read_inode(self.lookup_path(pathname)?.number);
@@ -667,7 +676,7 @@ impl Filesystem for E5FSFilesystem {
       .ok_or(Errno::ENOENT(format!("e5fs.lookup_path: no such file or directory {final_component} (get(final_component))")))
   }
 
-  fn name(&self) -> String { 
+fn name(&self) -> String { 
     String::from("e5fs")
   }
 
