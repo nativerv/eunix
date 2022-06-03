@@ -64,7 +64,7 @@ pub fn main() {
     (String::from("/cp"),           binaries::cp),        // [ ]
     (String::from("/write"),        binaries::write),     // [x]
     (String::from("/ed"),           binaries::ed),        // [x]
-    (String::from("/chmod"),        binaries::chmod),     // [ ]
+    (String::from("/chmod"),        binaries::chmod),     // [x]
     (String::from("/chown"),        binaries::chown),     // [ ]
     (String::from("/uname"),        binaries::uname),     // [ ]
     (String::from("/mount"),        binaries::mount),     // [x]

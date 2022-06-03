@@ -3,6 +3,7 @@ use std::process::Command;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use clap::Parser;
+use fancy_regex::Regex;
 use std::io::{Read, Write};
 
 use crate::eunix::devfs::DeviceFilesystem;
@@ -670,15 +671,54 @@ pub fn ed(args: Args, kernel: &mut Kernel) -> AddressSize {
 pub fn chmod(args: Args, kernel: &mut Kernel) -> AddressSize {
   #[derive(Debug, Parser)]
   struct BinArgs {
+    mode: String,
     pathname: String,
   }
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("chmod: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => 0,
+    Ok(BinArgs { pathname, mode: new_mode_string }) => {
+      let old_mode = match kernel.vfs.lookup_path(&pathname) {
+        Ok(vinode) => vinode.mode,
+        Err(Errno::ENOENT(_)) => {
+          println!("chmod: {pathname}: No such file or directory");
+          return EXIT_ENOENT;
+        },
+        Err(errno) => {
+          println!("chmod: unexpected error: {errno:?}");
+          return EXIT_FAILURE;
+        },
+      };
+
+      if !Regex::new("^[0-7]{3}$")
+        .unwrap()
+        .is_match(&new_mode_string)
+        .unwrap()
+      {
+        println!("chmod: invalid mode: '{new_mode_string}'");
+        return EXIT_FAILURE;
+      }
+
+      let user: AddressSize = new_mode_string.chars().map(|c| c.to_digit(8)).nth(0).unwrap().unwrap();
+      let group: AddressSize = new_mode_string.chars().map(|c| c.to_digit(8)).nth(1).unwrap().unwrap();
+      let others: AddressSize = new_mode_string.chars().map(|c| c.to_digit(8)).nth(2).unwrap().unwrap();
+
+      let new_mode = old_mode
+        .with_user(user as u8)
+        .with_group(group as u8)
+        .with_others(others as u8);
+
+      match kernel.vfs.change_mode(&pathname, new_mode) {
+        Ok(_) => EXIT_SUCCESS,
+        Err(errno) => {
+          println!("chmod: unexpected error: {errno:?}");
+          return EXIT_FAILURE;
+        },
+      }
+    },
   }
 }
 
