@@ -45,10 +45,16 @@ pub fn main() {
   // let mnt_eblan_inode = os.kernel.vfs.create_dir("/mnt/eblan").unwrap();
   // assert_eq!(mnt_eblan_inode.number, 2, "mnt_eblan_inode should be 2");
 
-  let binfs = os.kernel.vfs.mount_points.get_mut("/bin").unwrap().driver.as_any().downcast_mut::<BinFilesytem>().unwrap();
-  binfs.create_dir("/eblan").unwrap();
-  binfs.create_file("/eblan/ls").unwrap();
-
+  let binfs = os
+    .kernel
+    .vfs
+    .mount_points
+    .get_mut("/bin")
+    .unwrap()
+    .driver
+    .as_any()
+    .downcast_mut::<BinFilesytem>()
+    .unwrap();
   binfs.add_bins(vec![
     (String::from("/ls"),           binaries::ls),        // [x]
     (String::from("/stat"),         binaries::stat),      // [x]
@@ -65,12 +71,12 @@ pub fn main() {
     (String::from("/write"),        binaries::write),     // [x]
     (String::from("/ed"),           binaries::ed),        // [x]
     (String::from("/chmod"),        binaries::chmod),     // [x]
-    (String::from("/chown"),        binaries::chown),     // [ ]
+    (String::from("/chown"),        binaries::chown),     // [x]
     (String::from("/uname"),        binaries::uname),     // [x]
     (String::from("/mount"),        binaries::mount),     // [x]
     (String::from("/lsblk"),        binaries::lsblk),     // [x]
     (String::from("/id"),           binaries::id),        // [x]
-    (String::from("/whoami"),       binaries::whoami),    // [ ]
+    (String::from("/whoami"),       binaries::whoami),    // [x]
     (String::from("/su"),           binaries::su),        // [ ]
     (String::from("/useradd"),      binaries::useradd),   // [ ]
     (String::from("/usermod"),      binaries::usermod),   // [ ]

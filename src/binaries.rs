@@ -248,7 +248,9 @@ pub fn df(args: Args, kernel: &mut Kernel) -> AddressSize {
       println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => 0,
+    Ok(BinArgs { pathname }) => {
+      EXIT_SUCCESS
+    },
   }
 }
 
@@ -260,10 +262,12 @@ pub fn du(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("du: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => 0,
+    Ok(BinArgs { pathname }) => {
+      EXIT_SUCCESS
+    },
   }
 }
 
@@ -410,10 +414,12 @@ pub fn rmdir(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("rmdir: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => 0,
+    Ok(BinArgs { pathname }) => {
+      EXIT_SUCCESS
+    },
   }
 }
 
@@ -425,7 +431,7 @@ pub fn touch(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("touch: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => {
@@ -562,7 +568,9 @@ pub fn mv(args: Args, kernel: &mut Kernel) -> AddressSize {
       println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => 0,
+    Ok(BinArgs { pathname }) => {
+      EXIT_SUCCESS
+    },
   }
 }
 
@@ -577,7 +585,9 @@ pub fn cp(args: Args, kernel: &mut Kernel) -> AddressSize {
       println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => 0,
+    Ok(BinArgs { pathname }) => {
+      EXIT_SUCCESS
+    },
   }
 }
 
@@ -925,30 +935,52 @@ pub fn id(args: Args, kernel: &mut Kernel) -> AddressSize {
 pub fn whoami(args: Args, kernel: &mut Kernel) -> AddressSize {
   #[derive(Debug, Parser)]
   struct BinArgs {
-    pathname: String,
   }
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("whoami: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => 0,
+    Ok(BinArgs {}) => {
+      let user_name = kernel
+        .gid_map
+        .get(&kernel.current_uid)
+        .unwrap_or(&format!("<no name>({})", kernel.current_uid))
+        .clone();
+
+      println!("{user_name}");
+
+      EXIT_SUCCESS
+    },
   }
 }
 
 pub fn su(args: Args, kernel: &mut Kernel) -> AddressSize {
   #[derive(Debug, Parser)]
   struct BinArgs {
-    pathname: String,
+    user: String,
   }
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("su: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => 0,
+    Ok(BinArgs { user }) => {
+      if let Some(uid) = kernel
+        .uid_map
+        .iter()
+        .find(|(_, name)| user == **name)
+        .map(|(id, _)| *id)
+      {
+        kernel.current_uid = uid;
+        EXIT_SUCCESS
+      } else {
+        println!("su: user '{user}' does not exist; you might want to reread /etc/passwd");
+        EXIT_FAILURE
+      }
+    },
   }
 }
 
@@ -963,7 +995,9 @@ pub fn useradd(args: Args, kernel: &mut Kernel) -> AddressSize {
       println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => 0,
+    Ok(BinArgs { pathname }) => {
+      EXIT_SUCCESS
+    },
   }
 }
 
@@ -978,7 +1012,9 @@ pub fn usermod(args: Args, kernel: &mut Kernel) -> AddressSize {
       println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => 0,
+    Ok(BinArgs { pathname }) => {
+      EXIT_SUCCESS
+    },
   }
 }
 
@@ -993,7 +1029,9 @@ pub fn userdel(args: Args, kernel: &mut Kernel) -> AddressSize {
       println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => 0,
+    Ok(BinArgs { pathname }) => {
+      EXIT_SUCCESS
+    },
   }
 }
 
@@ -1008,7 +1046,9 @@ pub fn groupmod(args: Args, kernel: &mut Kernel) -> AddressSize {
       println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => 0,
+    Ok(BinArgs { pathname }) => {
+      EXIT_SUCCESS
+    },
   }
 }
 
@@ -1022,8 +1062,10 @@ pub fn groupdel(args: Args, kernel: &mut Kernel) -> AddressSize {
     Err(message) => {
       println!("mkfs.e5fs: invalid arguments: {message}");
       1
-    }
-    Ok(BinArgs { pathname }) => 0,
+    },
+    Ok(BinArgs { pathname }) => {
+      EXIT_SUCCESS    
+    },
   }
 }
 
