@@ -1,5 +1,9 @@
+use std::fs::File;
+use std::process::Command;
+
 use chrono::{DateTime, NaiveDateTime, Utc};
 use clap::Parser;
+use std::io::{Read, Write};
 
 use crate::eunix::devfs::DeviceFilesystem;
 use crate::eunix::fs::FilesystemType;
@@ -215,7 +219,7 @@ pub fn df(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => 0,
@@ -230,7 +234,7 @@ pub fn du(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => 0,
@@ -299,7 +303,7 @@ pub fn mkfs_e5fs(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
     Ok(parsed_args) => {
@@ -353,7 +357,7 @@ pub fn mkdir(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     },
     Ok(BinArgs { pathname }) => {
@@ -380,7 +384,7 @@ pub fn rmdir(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => 0,
@@ -395,7 +399,7 @@ pub fn touch(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => {
@@ -450,15 +454,74 @@ pub fn touch(args: Args, kernel: &mut Kernel) -> AddressSize {
 pub fn rm(args: Args, kernel: &mut Kernel) -> AddressSize {
   #[derive(Debug, Parser)]
   struct BinArgs {
+    #[clap(short, long, takes_value = false)]
+    recurse: bool,
+
+    // #[clap(short, long)]
+    // force: bool,
+
     pathname: String,
   }
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("rm: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => 0,
+    Ok(BinArgs { pathname, recurse }) => {
+      let vinode = match kernel.vfs.lookup_path(&pathname) {
+        Ok(vinode) => vinode,
+        Err(Errno::ENOENT(_)) => {
+          println!("rm: cannot remove '{pathname}': No such file or directory");
+          return EXIT_ENOENT;
+        },
+        Err(errno) => {
+          println!("rm: unexpected error: {errno:?}");
+          return EXIT_FAILURE;
+        },
+      };
+
+      // Just a file case
+      if vinode.mode.file_type() != FileModeType::Dir as u8 {
+        return match kernel.vfs.remove_file(&pathname) {
+          Ok(()) => EXIT_SUCCESS,
+          Err(errno) => {
+            println!("rm: unexpected error: {errno:?}");
+            EXIT_FAILURE
+          },
+        }
+      }
+
+      // Directory case
+      if !recurse {
+        println!("rm: cannot remove '{pathname}': Is a directory");
+        return EXIT_FAILURE;
+      }
+
+      // Recurse
+      match kernel.vfs.read_dir(&pathname) {
+        Ok(dir) => {
+          for (name, _) in dir
+            .entries
+            .into_iter()
+            .filter(|(name, _)| name != "." && name != "..")
+          {
+            let cloned_arg0 = args.get(0).unwrap().clone();
+            let new_pathname = format!("{pathname}/{name}");
+            println!("rm: descending into '({new_pathname})'");
+            let exit_status = rm(vec![cloned_arg0, String::from("-r"), new_pathname], kernel);
+            if exit_status != EXIT_SUCCESS {
+              return exit_status;
+            }
+          }
+          EXIT_SUCCESS
+        },
+        Err(errno) => {
+          println!("rm: unexpected error: {errno:?}");
+          EXIT_FAILURE
+        },
+      }
+    },
   }
 }
 
@@ -470,7 +533,7 @@ pub fn mv(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => 0,
@@ -485,10 +548,122 @@ pub fn cp(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => 0,
+  }
+}
+
+pub fn write(args: Args, kernel: &mut Kernel) -> AddressSize {
+  #[derive(Debug, Parser)]
+  struct BinArgs {
+    pathname: String,
+    text: String,
+  }
+
+  match BinArgs::try_parse_from(args.iter()) {
+    Err(message) => {
+      println!("mkfs.e5fs: invalid arguments: {message}");
+      1
+    },
+    Ok(BinArgs { pathname, text }) => {
+      let bytes = text.as_bytes();
+      match kernel.vfs.write_file(&pathname, bytes) {
+        Ok(_) => EXIT_SUCCESS,
+        Err(Errno::ENOENT(_)) => {
+          println!("write: {pathname}: No such file or directory");
+          return EXIT_ENOENT;
+        },
+        Err(Errno::EISDIR(_)) => {
+          println!("write: {pathname}: Is a directory");
+          return EXIT_FAILURE;
+        },
+        Err(errno) => {
+          println!("write: unexpected error: {errno:?}");
+          return EXIT_FAILURE;
+        },
+      }
+    },
+  }
+}
+
+pub fn ed(args: Args, kernel: &mut Kernel) -> AddressSize {
+  #[derive(Debug, Parser)]
+  struct BinArgs {
+    pathname: String,
+  }
+
+  match BinArgs::try_parse_from(args.iter()) {
+    Err(message) => {
+      println!("ed: parse error: {message}");
+      1
+    },
+    Ok(BinArgs { pathname }) => {
+      // Read file
+      let bytes = match kernel.vfs.read_file(&pathname, AddressSize::MAX) {
+        Ok(bytes) => bytes,
+        Err(Errno::ENOENT(_)) => {
+          println!("ed: {pathname}: No such file or directory");
+          return EXIT_ENOENT;
+        },
+        Err(Errno::EISDIR(_)) => {
+          println!("ed: {pathname}: Is a directory");
+          return EXIT_FAILURE;
+        },
+        Err(errno) => {
+          println!("ed: unexpected error: {errno:?}");
+          return EXIT_FAILURE;
+        },
+      };
+      
+      // Edit file
+      let editor = std::env::var("EDITOR").expect("EDITOR env var must be set");
+      let mut file_path = std::env::temp_dir();
+      file_path.push("eunix_editor_file");
+
+      match File::create(&file_path)
+        .and_then(|mut file| file.write_all(&bytes)) 
+      {
+        Ok(_) => {
+        },
+        Err(message) => {
+          println!("ed: error while creating platform-provided temp file: {message:#?}");
+          return EXIT_FAILURE;
+        },
+      }
+      
+
+      if let Err(message) = Command::new(editor)
+          .arg(&file_path)
+          .status() 
+      {
+        println!("ed: error while opening platform-provided editor: {message:#?}");
+        return EXIT_FAILURE;
+      }
+
+      let mut edited_bytes = Vec::new();
+
+      match File::open(&file_path)
+        .and_then(|mut file| file.read_to_end(&mut edited_bytes)) 
+      {
+        Ok(_) => {
+        },
+        Err(message) => {
+          println!("ed: error while reading back edited platform-provided temp file: {message:#?}");
+          return EXIT_FAILURE;
+        },
+      }
+
+      // Write file back
+      return match kernel.vfs.write_file(&pathname, &edited_bytes) {
+        Ok(_) => EXIT_SUCCESS,
+        Err(errno) => {
+          println!("ed: unexpected error: {errno:?}");
+          EXIT_FAILURE
+        },
+      }
+    },
   }
 }
 
@@ -500,7 +675,7 @@ pub fn chmod(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => 0,
@@ -515,7 +690,7 @@ pub fn chown(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => 0,
@@ -531,7 +706,7 @@ pub fn uname(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => 0,
@@ -586,7 +761,7 @@ pub fn id(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => 0,
@@ -601,7 +776,7 @@ pub fn whoami(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => 0,
@@ -616,7 +791,7 @@ pub fn su(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => 0,
@@ -631,7 +806,7 @@ pub fn useradd(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => 0,
@@ -646,7 +821,7 @@ pub fn usermod(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => 0,
@@ -661,7 +836,7 @@ pub fn userdel(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => 0,
@@ -676,7 +851,7 @@ pub fn groupmod(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => 0,
@@ -691,7 +866,7 @@ pub fn groupdel(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: error: {message}");
+      println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => 0,

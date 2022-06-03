@@ -33,16 +33,16 @@ pub fn main() {
     .find(|(_realpath, &dev_type)| dev_type == VirtualDeviceType::BlockDevice)
     .unwrap();
 
-  E5FSFilesystem::mkfs(sda1_realpath, 0.05, 4096).unwrap();
+  // E5FSFilesystem::mkfs(sda1_realpath, 0.05, 4096).unwrap();
 
   os.kernel.mount("", "/dev", eunix::fs::FilesystemType::devfs).unwrap();
   os.kernel.mount("", "/bin", eunix::fs::FilesystemType::binfs).unwrap();
   os.kernel.mount("/dev/sda", "/", eunix::fs::FilesystemType::e5fs).unwrap();
 
   // let eunix_inode = os.kernel.vfs.create_file("/mnt").unwrap();
-  let mnt_inode = os.kernel.vfs.create_dir("/mnt").unwrap();
+  // let mnt_inode = os.kernel.vfs.create_dir("/mnt").unwrap();
   // assert_eq!(mnt_inode.number, 1, "mnt_inode should be 1");
-  let mnt_eblan_inode = os.kernel.vfs.create_dir("/mnt/eblan").unwrap();
+  // let mnt_eblan_inode = os.kernel.vfs.create_dir("/mnt/eblan").unwrap();
   // assert_eq!(mnt_eblan_inode.number, 2, "mnt_eblan_inode should be 2");
 
   let binfs = os.kernel.vfs.mount_points.get_mut("/bin").unwrap().driver.as_any().downcast_mut::<BinFilesytem>().unwrap();
@@ -59,9 +59,11 @@ pub fn main() {
     (String::from("/mkdir"),        binaries::mkdir),     // [x]
     (String::from("/rmdir"),        binaries::rmdir),     // [ ]
     (String::from("/touch"),        binaries::touch),     // [x]
-    (String::from("/rm"),           binaries::rm),        // [ ]
+    (String::from("/rm"),           binaries::rm),        // [x]
     (String::from("/mv"),           binaries::mv),        // [ ]
     (String::from("/cp"),           binaries::cp),        // [ ]
+    (String::from("/write"),        binaries::write),     // [x]
+    (String::from("/ed"),           binaries::ed),        // [x]
     (String::from("/chmod"),        binaries::chmod),     // [ ]
     (String::from("/chown"),        binaries::chown),     // [ ]
     (String::from("/uname"),        binaries::uname),     // [ ]

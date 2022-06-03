@@ -409,8 +409,10 @@ impl Filesystem for VFS {
 
   fn remove_file(&mut self, pathname: &str)
     -> Result<(), Errno> {
-        todo!()
-    }
+    let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
+    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::remove_file: we know that mount_point exist");  
+    mounted_fs.driver.remove_file(&internal_pathname)
+  }
 
   fn create_dir(&mut self, pathname: &str)
     -> Result<VINode, Errno> {

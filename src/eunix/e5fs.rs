@@ -165,10 +165,23 @@ impl From<DirectoryEntry> for VDirectoryEntry {
     }
   }
 }
+impl From<VDirectoryEntry> for DirectoryEntry {
+  fn from(entry: VDirectoryEntry) -> Self {
+    DirectoryEntry::new(entry.inode_number, &entry.name).unwrap()
+  }
+}
 
 impl From<Directory> for VDirectory {
   fn from(dir: Directory) -> Self {
     Self {
+      entries: dir.entries.into_iter().map(|(key, entry)| (key, entry.into())).collect(),
+    }
+  }
+}
+impl From<VDirectory> for Directory {
+  fn from(dir: VDirectory) -> Self {
+    Self {
+      entries_count: dir.entries.len() as AddressSize,
       entries: dir.entries.into_iter().map(|(key, entry)| (key, entry.into())).collect(),
     }
   }
@@ -454,8 +467,44 @@ impl Filesystem for E5FSFilesystem {
 
   fn remove_file(&mut self, pathname: &str)
     -> Result<(), Errno> {
-        todo!()
-    } 
+    let parent_pathname = VFS::parent_dir(pathname)?;
+    let (_, final_component) = VFS::split_path(pathname)?;
+    let parent_vinode = self.lookup_path(&parent_pathname)?;
+    let mut parent_dir = self.read_dir(&parent_pathname)?;
+
+    if final_component == "." || final_component == ".." {
+      return Err(Errno::EINVAL(format!("e5fs::remove_file: you cannot remove self or parent-reference")))
+    }
+    
+    // Mutate dir and write (save) it
+    let VDirectoryEntry {
+        inode_number,
+        ..
+    } = parent_dir
+      .entries
+      .remove(&final_component)
+      .ok_or(Errno::ENOENT(format!("e5fs::remove_file: no such file or directory '{final_component}'")))?;
+    self.write_dir_i(&parent_dir.into(), parent_vinode.number)?;
+
+    // Read inode and update it's values
+    let mut inode = self.read_inode(inode_number);
+    inode.links_count -= 1;
+    inode.ctime = unixtime();
+
+    // Free blocks of inode if no links left
+    if inode.links_count < 1 {
+      for block_number in self
+        .iter_blocks_i(inode_number)
+        .take_while(|&block_number| block_number != NO_ADDRESS)
+      {
+        self.release_block(block_number)?;
+      }
+      inode.mode = inode.mode.with_free(1);
+    }
+
+    // Write (save) inode to disk
+    self.write_inode(&inode, inode.number)
+  } 
 
   fn create_dir(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
@@ -495,8 +544,11 @@ impl Filesystem for E5FSFilesystem {
 
   fn write_file(&mut self, pathname: &str, data: &[u8])
     -> Result<VINode, Errno> {
-    let inode_number = self.lookup_path(pathname)?.number;
-    let new_vinode: VINode = self.write_data_i(data.to_owned(), inode_number, false)?.into();
+    let vinode = self.lookup_path(pathname)?;
+    if vinode.mode.file_type() == FileModeType::Dir as u8 {
+      return Err(Errno::EISDIR(format!("e5fs::write_file: is a directory")))
+    }
+    let new_vinode: VINode = self.write_data_i(data.to_owned(), vinode.number, false)?.into();
     Ok(new_vinode)
   }
 
@@ -739,6 +791,9 @@ impl E5FSFilesystem {
       self.grow_file(inode_number, (difference as f64 / self.fs_info.block_size as f64).ceil() as AddressSize)?;
     }
 
+    // Refresh inode from disk
+    let inode = self.read_inode(inode_number);
+
     // Split data to chunks...
     let chunks = data
       .chunks(self.fs_info.block_size as usize)
@@ -762,14 +817,12 @@ impl E5FSFilesystem {
   fn read_data_i(&self, inode_number: AddressSize) -> Result<Vec<u8>, Errno> {
     let inode = self.read_inode(inode_number);
 
-    let data = inode.direct_block_numbers
-      .iter()
-      .take_while(|&&block_number| block_number != NO_ADDRESS)
-      .fold(Vec::new(), |mut bytes, &block_number| {
-        let block = self.read_block(block_number);
-        bytes.write(&block.data).unwrap();
-        bytes
-      });
+    let data = self
+      .iter_blocks_i(inode_number)
+      .take_while(|&block_number| block_number != NO_ADDRESS)
+      .flat_map(|block_number| self.read_block(block_number).data)
+      .take(inode.file_size as usize)
+      .collect();
 
     Ok(data)
   }
@@ -869,7 +922,7 @@ impl E5FSFilesystem {
     Ok(block_number)
   }
 
-  /// Replace specified inode in `free_inode_numbers` with `NO_ADDRESS`
+  /// Replace specified inode in `fbl` with `block_number`
   /// FIXME: block_number may left dangling in inode's fields
   fn release_block(&mut self, block_number: AddressSize) -> Result<(), Errno> {
     let address_size = self.fs_info.address_size;
@@ -920,10 +973,10 @@ impl E5FSFilesystem {
     let mut inode = self.read_inode(inode_number);
 
     // Find first empty slot
-    let empty_slot = inode.direct_block_numbers
-      .iter()
+    let empty_slot = self
+      .iter_blocks_i(inode_number)
       .zip(0..)
-      .find_map(|(&block_number, slot_index)| if block_number == NO_ADDRESS {
+      .find_map(|(block_number, slot_index)| if block_number == NO_ADDRESS {
         Some(slot_index)
       } else {
         None
@@ -995,6 +1048,13 @@ impl E5FSFilesystem {
     self.write_inode(&inode, inode_number)?;
 
     Ok(())
+  }
+
+  fn iter_blocks_i(&self, inode_number: AddressSize) -> impl Iterator<Item = AddressSize> {
+    let inode = self.read_inode(inode_number);
+
+    inode.direct_block_numbers
+      .into_iter()
   }
 
   // Errors:
