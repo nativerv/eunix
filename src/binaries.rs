@@ -132,7 +132,17 @@ pub fn ls(args: Args, kernel: &mut Kernel) -> AddressSize {
       print!("\t");
 
       // User and group owners
-      print!("{} {}", vinode.uid, vinode.gid);
+      let user = kernel
+        .uid_map
+        .get(&vinode.uid)
+        .unwrap_or(&format!("{}", vinode.uid))
+        .clone();
+      let group = kernel
+        .gid_map
+        .get(&vinode.gid)
+        .unwrap_or(&format!("{}", vinode.gid))
+        .clone();
+      print!("{user} {group}");
 
       print!("\t");
 
@@ -179,9 +189,13 @@ pub fn stat(args: Args, kernel: &mut Kernel) -> AddressSize {
       btime,
     } = match kernel.vfs.stat(&pathname) {
       Ok(stat) => stat,
+      Err(Errno::ENOENT(_)) => {
+        println!("stat: {pathname}: No such file or directory");
+        return EXIT_ENOENT;
+      },
       Err(errno) => {
-        println!("stat: error: {errno:?}");
-        return 1;
+        println!("stat: unexpected error: {errno:?}");
+        return EXIT_FAILURE;
       }
     };
     let blocks_count = size.checked_div(block_size).unwrap_or(0);
@@ -199,17 +213,27 @@ pub fn stat(args: Args, kernel: &mut Kernel) -> AddressSize {
     let btime_human =
       DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(btime as i64, 0), Utc)
       .format("%Y-%m-%d %H:%M:%S.%f");
+    let user = kernel
+      .uid_map
+      .get(&uid)
+      .unwrap_or(&String::from("<no name>"))
+      .clone();
+    let group = kernel
+      .gid_map
+      .get(&gid)
+      .unwrap_or(&String::from("<no name>"))
+      .clone();
     println!("  File: {pathname}");
     println!("  Size: {size}\tBlocks: {blocks_count}\t{file_type}");
     println!("Device: <unknown>\tInode: {inode_number}\tLinks: {links_count}");
-    println!("Access: {file_mode_raw:o}\tUid: {uid}\tGid: {gid}");
+    println!("Access: {file_mode_raw:o}\tUid: ({uid}/{user})\tGid: ({gid}/{group})");
     println!("Access: {atime_human}");
     println!("Modify: {mtime_human}");
     println!("Change: {ctime_human}");
-    println!(" Birth: {ctime_human}");
-    0
+    println!(" Birth: {btime_human}");
+    EXIT_SUCCESS
   } else {
-    1
+    EXIT_FAILURE
   }
 }
 
@@ -792,7 +816,7 @@ pub fn chown(args: Args, kernel: &mut Kernel) -> AddressSize {
         Ok(_) => EXIT_SUCCESS,
         Err(errno) => {
           println!("chown: unexpected error: {errno:?}");
-          return EXIT_FAILURE;
+          EXIT_FAILURE
         },
       }
     },

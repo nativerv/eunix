@@ -131,9 +131,13 @@ pub struct INode {
   uid: Id,
   gid: Id,
   file_size: AddressSize,
+  /// Last access time
   atime: UnixtimeSize,
+  /// Last contents change time
   mtime: UnixtimeSize,
+  /// Last inode change time
   ctime: UnixtimeSize,
+  /// Birth (creation) time (non-standard)
   btime: UnixtimeSize,
   direct_block_numbers: [AddressSize; 12],
   indirect_block_numbers: [AddressSize; 3],
@@ -812,15 +816,14 @@ impl E5FSFilesystem {
       self.write_block(&Block { data: chunk.to_owned(), }, inode.direct_block_numbers[i])?;
     };
 
-    // Write new size to inode, and update times
-    let mut inode_cloned = inode.clone();
-    inode_cloned.file_size = data.len() as AddressSize;
-    inode_cloned.atime = unixtime();
-    inode_cloned.mtime = unixtime();
-    inode_cloned.ctime = unixtime();
-    self.write_inode(&inode_cloned, inode_number)?;
+    // Refresh inode from disk
+    let mut inode = self.read_inode(inode_number);
+    inode.file_size = data.len() as AddressSize;
+    inode.mtime = unixtime();
+    self.write_inode(&inode, inode_number)?;
 
-    Ok(inode_cloned)
+    let inode = self.read_inode(inode_number);
+    Ok(inode)
   }
 
   fn read_data_i(&self, inode_number: AddressSize) -> Result<Vec<u8>, Errno> {
