@@ -12,7 +12,7 @@ use fancy_regex::Regex;
 use itertools::Itertools;
 
 use crate::eunix::fs::FileModeType;
-use crate::eunix::fs::NOBODY;
+use crate::eunix::fs::NOBODY_UID;
 use crate::eunix::kernel::UnixtimeSize;
 use crate::util::fixedpoint;
 use crate::util::unixtime;
@@ -193,8 +193,8 @@ impl Default for INode {
       mode: FileMode::default(),
       links_count: 0,
       file_size: 0,
-      uid: NOBODY,
-      gid: NOBODY,
+      uid: NOBODY_UID,
+      gid: NOBODY_UID,
       atime: 0,
       mtime: 0,
       ctime: 0,
@@ -947,8 +947,8 @@ impl E5FSFilesystem {
       mode: FileMode::default().with_free(0),
       links_count: 0,
       file_size: 0,
-      uid: NOBODY,
-      gid: NOBODY,
+      uid: NOBODY_UID,
+      gid: NOBODY_UID,
       atime: unixtime(),
       mtime: unixtime(),
       ctime: unixtime(),
@@ -1384,7 +1384,7 @@ impl E5FSFilesystem {
 mod e5fs_fs_tests {
   use std::array::IntoIter;
 
-use crate::{util::{mktemp, mkenxvd}, eunix::fs::NOBODY};
+use crate::{util::{mktemp, mkenxvd}, eunix::fs::NOBODY_UID};
   use super::*;
 
   #[test]
@@ -1417,8 +1417,8 @@ use crate::{util::{mktemp, mkenxvd}, eunix::fs::NOBODY};
       vec.push(INode {
         mode: FileMode::zero() + FileMode::new(1),
         links_count: i,
-        uid: (i as Id % NOBODY),
-        gid: (i as Id % NOBODY) + 1,
+        uid: (i as Id % NOBODY_UID),
+        gid: (i as Id % NOBODY_UID) + 1,
         file_size: i * 1024,
         atime: unixtime(),
         mtime: unixtime(),

@@ -4,6 +4,7 @@ use std::process::Command;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use clap::Parser;
 use fancy_regex::Regex;
+use itertools::Itertools;
 use std::io::{Read, Write};
 
 use crate::eunix::devfs::DeviceFilesystem;
@@ -741,7 +742,6 @@ pub fn chown(args: Args, kernel: &mut Kernel) -> AddressSize {
 pub fn uname(args: Args, kernel: &mut Kernel) -> AddressSize {
   #[derive(Debug, Parser)]
   struct BinArgs {
-    pathname: String,
   }
 
   match BinArgs::try_parse_from(args.iter()) {
@@ -749,7 +749,10 @@ pub fn uname(args: Args, kernel: &mut Kernel) -> AddressSize {
       println!("mkfs.e5fs: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => 0,
+    Ok(BinArgs { }) => {
+      println!("Eunix");
+      EXIT_SUCCESS
+    },
   }
 }
 
@@ -796,15 +799,41 @@ pub fn mount(args: Args, kernel: &mut Kernel) -> AddressSize {
 pub fn id(args: Args, kernel: &mut Kernel) -> AddressSize {
   #[derive(Debug, Parser)]
   struct BinArgs {
-    pathname: String,
   }
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("id: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => 0,
+    Ok(BinArgs { }) => {
+      let Kernel { current_uid, current_gid, .. } = kernel;
+      let current_username = kernel
+        .uid_map
+        .get(current_uid)
+        .unwrap_or(&String::from("<no name>"))
+        .clone();
+      let current_groupname = kernel
+        .gid_map
+        .get(current_gid)
+        .unwrap_or(&String::from("<no name>"))
+        .clone();
+      let current_sgids_string = kernel
+        .current_sgids
+        .iter()
+        .map(|sgid| {
+          let groupname = kernel
+            .gid_map
+            .get(sgid)
+            .unwrap_or(&String::from("<no name>"))
+            .clone();
+          format!("{sgid}({groupname})")
+        })
+        .join(",");
+
+      println!("uid={current_uid}({current_username}) gid={current_gid}({current_groupname}) groups={current_sgids_string}");
+      EXIT_SUCCESS
+    },
   }
 }
 

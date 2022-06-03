@@ -11,7 +11,7 @@ use std::slice::SliceIndex;
 // use fancy_regex::Regex;
 
 use crate::eunix::fs::FileModeType;
-use crate::eunix::fs::NOBODY;
+use crate::eunix::fs::NOBODY_UID;
 use crate::eunix::kernel::KERNEL_MESSAGE_HEADER_ERR;
 // use crate::util::fixedpoint;
 // use crate::util::unixtime;
@@ -143,8 +143,8 @@ impl Default for INode {
       mode: FileMode::default(),
       links_count: 0,
       file_size: 0,
-      uid: NOBODY,
-      gid: NOBODY,
+      uid: NOBODY_UID,
+      gid: NOBODY_UID,
       atime: 0,
       mtime: 0,
       ctime: 0,
@@ -229,8 +229,8 @@ impl<T: VirtFsFile> VirtFsFilesystem<T> {
       mode: FileMode::default().with_free(0),
       links_count: 0,
       file_size: 0,
-      uid: NOBODY,
-      gid: NOBODY,
+      uid: NOBODY_UID,
+      gid: NOBODY_UID,
       atime: 0,
       mtime: 0,
       ctime: 0,

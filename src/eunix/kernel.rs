@@ -5,7 +5,7 @@ use crate::eunix;
 use crate::machine::{MachineDeviceTable, VirtualDeviceType};
 use std::collections::BTreeMap;
 
-use super::fs::{AddressSize, Filesystem, FilesystemType, VDirectory, Id, VINode, FileStat};
+use super::fs::{AddressSize, Filesystem, FilesystemType, VDirectory, Id, VINode, FileStat, NOBODY_UID, NOBODY_GID};
 use super::virtfs::{VirtFsFilesystem, Payload};
 
 pub type Args = Vec<String>;
@@ -57,6 +57,7 @@ pub enum Errno {
 
 pub static KERNEL_MESSAGE_HEADER_ERR: &'static str = "\x1b[93mkernel\x1b[0m";
 const ROOT_UID: Id = 0;
+const ROOT_GID: Id = 0;
 
 #[derive(Debug, Clone)]
 pub struct Process {
@@ -111,12 +112,25 @@ impl From<MachineDeviceTable> for KernelDeviceTable {
   }
 }
 
+type IdMap = BTreeMap<Id, String>;
+
 #[derive(Debug)]
 pub struct Kernel {
   pub vfs: VFS,
   pub processes: BTreeMap<AddressSize, Process>,
   pub current_process_id: AddressSize,
   pub device_table: KernelDeviceTable,
+  // Current user id
+  pub current_uid: Id,
+  // Primary group of current user
+  pub current_gid: Id,
+  // Supplementary groups of current user
+  pub current_sgids: Vec<Id>,
+  // Map uid => name
+  pub uid_map: IdMap,
+  // Map uid => name
+  pub gid_map: IdMap,
+
   // registered_filesystems: BTreeMap<>,
 }
 
@@ -138,6 +152,17 @@ impl Kernel {
       processes: BTreeMap::new(),
       current_process_id: 0,
       device_table: devices.clone().into(),
+      current_uid: ROOT_UID,
+      current_gid: ROOT_GID,
+      current_sgids: vec![ROOT_GID],
+      uid_map: BTreeMap::from([
+        (ROOT_UID, String::from("root")),
+        (NOBODY_UID, String::from("nobody")),
+      ]),
+      gid_map: BTreeMap::from([
+        (ROOT_GID, String::from("root")),
+        (NOBODY_GID, String::from("nobody")),
+      ]),
     };
 
     // let init_pid = kernel.allocate_pid();

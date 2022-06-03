@@ -17,7 +17,8 @@ pub type Id = u16;
 /// after which the whole fs will not work anymore so who caresi guessb.
 pub const NO_ADDRESS: AddressSize = AddressSize::MAX;
 pub const EVERYTHING: AddressSize = AddressSize::MAX;
-pub const NOBODY: Id = Id::MAX;
+pub const NOBODY_UID: Id = Id::MAX;
+pub const NOBODY_GID: Id = Id::MAX;
 
 enum Devtype {
   File  = 0b000,
