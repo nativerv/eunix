@@ -67,7 +67,7 @@ pub fn main() {
     (String::from("/touch"),        binaries::touch),     // [x]
     (String::from("/rm"),           binaries::rm),        // [x]
     (String::from("/mv"),           binaries::mv),        // [ ]
-    (String::from("/cp"),           binaries::cp),        // [ ]
+    (String::from("/cp"),           binaries::cp),        // [x]
     (String::from("/write"),        binaries::write),     // [x]
     (String::from("/ed"),           binaries::ed),        // [x]
     (String::from("/chmod"),        binaries::chmod),     // [x]

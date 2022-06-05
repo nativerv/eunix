@@ -27,15 +27,16 @@ pub const EXIT_FAILURE: AddressSize = 1;
 // FS reading stuff
 
 pub fn ls(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   if let Some(pathname) = args.get(1) {
     let _parent_dir = match VFS::parent_dir(pathname) {
         Ok(parent_dir) => parent_dir,
         Err(Errno::EINVAL(message)) => {
-          println!("ls: invalid path: {message}");
+          println!("{arg0}: invalid path: {message}");
           return 1;
         },
         Err(errno) => {
-          println!("ls: invalid path: {errno:?}");
+          println!("{arg0}: invalid path: {errno:?}");
           return 1;
         },
     };
@@ -43,11 +44,11 @@ pub fn ls(args: Args, kernel: &mut Kernel) -> AddressSize {
     let dir = match kernel.vfs.read_dir(&pathname) {
       Ok(dir) => dir,
       Err(Errno::ENOTDIR(_)) => {
-        println!("ls: not a directory: {pathname}");
+        println!("{arg0}: not a directory: {pathname}");
         return 1;
       },
       Err(errno) => {
-        println!("ls: unexpected error: {errno:?}");
+        println!("{arg0}: unexpected error: {errno:?}");
         return 1;
       }
     };
@@ -57,7 +58,7 @@ pub fn ls(args: Args, kernel: &mut Kernel) -> AddressSize {
       let vinode = kernel
         .vfs
         .lookup_path(&child_pathname)
-        .expect(&format!("ls: we know that {child_pathname} exists"));
+        .expect(&format!("{arg0}: we know that {child_pathname} exists"));
 
       // Print file type
       match vinode.mode.file_type().try_into().unwrap() {
@@ -173,6 +174,7 @@ pub fn ls(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn stat(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   if let Some(pathname) = args.get(1) {
     println!("pathname_before_pass_to_bin_stat: {pathname}");
     let FileStat {
@@ -190,11 +192,11 @@ pub fn stat(args: Args, kernel: &mut Kernel) -> AddressSize {
     } = match kernel.vfs.stat(&pathname) {
       Ok(stat) => stat,
       Err(Errno::ENOENT(_)) => {
-        println!("stat: {pathname}: No such file or directory");
+        println!("{arg0}: {pathname}: No such file or directory");
         return EXIT_ENOENT;
       },
       Err(errno) => {
-        println!("stat: unexpected error: {errno:?}");
+        println!("{arg0}: unexpected error: {errno:?}");
         return EXIT_FAILURE;
       }
     };
@@ -238,6 +240,7 @@ pub fn stat(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn df(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     pathname: String,
@@ -255,6 +258,7 @@ pub fn df(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn du(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     pathname: String,
@@ -262,7 +266,7 @@ pub fn du(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("du: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => {
@@ -272,13 +276,14 @@ pub fn du(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn cat(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   // #[derive(Debug, Parser)]
   // struct BinArgs {
   //   pathname: String,
   // }
   
   if args[1..].is_empty() {
-    println!("cat: no files to concatenate");
+    println!("{arg0}: no files to concatenate");
     return 1;
   }
 
@@ -289,15 +294,15 @@ pub fn cat(args: Args, kernel: &mut Kernel) -> AddressSize {
     let mut bytes = match kernel.vfs.read_file(&pathname, AddressSize::MAX) {
         Ok(bytes) => bytes,
         Err(Errno::ENOENT(_)) => {
-          println!("cat: {pathname}: No such file or directory");
+          println!("{arg0}: {pathname}: No such file or directory");
           return EXIT_ENOENT;
         },
         Err(Errno::EISDIR(_)) => {
-          println!("cat: {pathname}: Is a directory");
+          println!("{arg0}: {pathname}: Is a directory");
           return EXIT_FAILURE;
         },
         Err(errno) => {
-          println!("cat: unexpected error: {errno:?}");
+          println!("{arg0}: unexpected error: {errno:?}");
           return EXIT_FAILURE;
         },
     };
@@ -307,7 +312,7 @@ pub fn cat(args: Args, kernel: &mut Kernel) -> AddressSize {
   let utf8_string = match std::str::from_utf8(&concatenated_bytes) {
       Ok(utf8_string) => utf8_string,
       Err(utf8error) => {
-        println!("cat: can't parse utf8: {utf8error}");
+        println!("{arg0}: can't parse utf8: {utf8error}");
         return EXIT_FAILURE;
       },
   };
@@ -320,6 +325,7 @@ pub fn cat(args: Args, kernel: &mut Kernel) -> AddressSize {
 // FS writing stuff
 
 pub fn mkfs_e5fs(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     #[clap(short, long, default_value_t = 4096)]
@@ -339,7 +345,7 @@ pub fn mkfs_e5fs(args: Args, kernel: &mut Kernel) -> AddressSize {
     Ok(parsed_args) => {
       let dev_pathname = parsed_args.device_pathname;
       let (mount_point, internal_pathname) = kernel.vfs.match_mount_point(&dev_pathname).unwrap();
-      let mounted_fs = kernel.vfs.mount_points.get_mut(&mount_point).expect("VFS::lookup_path: we know that mount_point exist"); 
+      let mounted_fs = kernel.vfs.mount_points.get_mut(&mount_point).expect("{arg0}::lookup_path: we know that mount_point exist"); 
 
       let device_realpath = if mounted_fs.r#type == FilesystemType::devfs {
         match mounted_fs
@@ -380,6 +386,7 @@ pub fn mkfs_e5fs(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn mkdir(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     pathname: String,
@@ -387,18 +394,18 @@ pub fn mkdir(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkdir: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     },
     Ok(BinArgs { pathname }) => {
       match kernel.vfs.create_dir(&pathname) {
         Ok(_) => EXIT_SUCCESS,
         Err(Errno::ENOENT(_)) => {
-          println!("mkdir: cannot create directory: '{pathname}': No such file or directory");
+          println!("{arg0}: cannot create directory: '{pathname}': No such file or directory");
           EXIT_ENOENT
         },
         Err(errno) => {
-          println!("mkdir: unexpected error: {errno:?}");
+          println!("{arg0}: unexpected error: {errno:?}");
           EXIT_FAILURE
         },
       }
@@ -407,6 +414,7 @@ pub fn mkdir(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn rmdir(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     pathname: String,
@@ -414,7 +422,7 @@ pub fn rmdir(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("rmdir: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => {
@@ -424,6 +432,7 @@ pub fn rmdir(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn touch(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     pathname: String,
@@ -431,7 +440,7 @@ pub fn touch(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("touch: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => {
@@ -445,7 +454,7 @@ pub fn touch(args: Args, kernel: &mut Kernel) -> AddressSize {
         }) {
           Ok(_) => EXIT_SUCCESS,
           Err(errno) => {
-            println!("touch: unexpected error: {errno:?}");
+            println!("{arg0}: unexpected error: {errno:?}");
             EXIT_FAILURE
           },
         }
@@ -459,23 +468,23 @@ pub fn touch(args: Args, kernel: &mut Kernel) -> AddressSize {
               match kernel.vfs.create_file(&pathname) {
                 Ok(_) => EXIT_SUCCESS,
                 Err(errno) => {
-                  println!("touch: unexpected error: {errno:?}");
+                  println!("{arg0}: unexpected error: {errno:?}");
                   EXIT_FAILURE
                 },
               }
             },
             Err(Errno::ENOENT(_)) => {
-              println!("touch: cannot touch '{pathname}': No such file or directory");
+              println!("{arg0}: cannot touch '{pathname}': No such file or directory");
               EXIT_ENOENT
             },
             Err(errno) => {
-              println!("touch: unexpected error: {errno:?}");
+              println!("{arg0}: unexpected error: {errno:?}");
               EXIT_FAILURE
             },
           }
         },
         Err(errno) => {
-          println!("touch: unexpected error: {errno:?}");
+          println!("{arg0}: unexpected error: {errno:?}");
           EXIT_FAILURE
         },
       }
@@ -484,6 +493,7 @@ pub fn touch(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn rm(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     #[clap(short, long, takes_value = false)]
@@ -497,18 +507,18 @@ pub fn rm(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("rm: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname, recurse }) => {
       let vinode = match kernel.vfs.lookup_path(&pathname) {
         Ok(vinode) => vinode,
         Err(Errno::ENOENT(_)) => {
-          println!("rm: cannot remove '{pathname}': No such file or directory");
+          println!("{arg0}: cannot remove '{pathname}': No such file or directory");
           return EXIT_ENOENT;
         },
         Err(errno) => {
-          println!("rm: unexpected error: {errno:?}");
+          println!("{arg0}: unexpected error: {errno:?}");
           return EXIT_FAILURE;
         },
       };
@@ -518,7 +528,7 @@ pub fn rm(args: Args, kernel: &mut Kernel) -> AddressSize {
         return match kernel.vfs.remove_file(&pathname) {
           Ok(()) => EXIT_SUCCESS,
           Err(errno) => {
-            println!("rm: unexpected error: {errno:?}");
+            println!("{arg0}: unexpected error: {errno:?}");
             EXIT_FAILURE
           },
         }
@@ -526,7 +536,7 @@ pub fn rm(args: Args, kernel: &mut Kernel) -> AddressSize {
 
       // Directory case
       if !recurse {
-        println!("rm: cannot remove '{pathname}': Is a directory");
+        println!("{arg0}: cannot remove '{pathname}': Is a directory");
         return EXIT_FAILURE;
       }
 
@@ -540,7 +550,7 @@ pub fn rm(args: Args, kernel: &mut Kernel) -> AddressSize {
           {
             let cloned_arg0 = args.get(0).unwrap().clone();
             let new_pathname = format!("{pathname}/{name}");
-            println!("rm: descending into '({new_pathname})'");
+            println!("{arg0}: descending into '({new_pathname})'");
             let exit_status = rm(vec![cloned_arg0, String::from("-r"), new_pathname], kernel);
             if exit_status != EXIT_SUCCESS {
               return exit_status;
@@ -549,13 +559,13 @@ pub fn rm(args: Args, kernel: &mut Kernel) -> AddressSize {
           return match kernel.vfs.remove_file(&pathname) {
             Ok(()) => EXIT_SUCCESS,
             Err(errno) => {
-              println!("rm: unexpected error: {errno:?}");
+              println!("{arg0}: unexpected error: {errno:?}");
               EXIT_FAILURE
             },
           } 
         },
         Err(errno) => {
-          println!("rm: unexpected error: {errno:?}");
+          println!("{arg0}: unexpected error: {errno:?}");
           EXIT_FAILURE
         },
       }
@@ -564,6 +574,7 @@ pub fn rm(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn mv(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     source_pathname: String,
@@ -572,57 +583,62 @@ pub fn mv(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mv: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { source_pathname, target_pathname }) => {
+      let arg0 = args.get(0).unwrap().clone();
+      cp(vec![arg0.clone(), source_pathname.clone(), target_pathname], kernel);
+      rm(vec![arg0.clone(), String::from("-r"), source_pathname.clone()], kernel);
       EXIT_SUCCESS
     },
   }
 }
 
 pub fn cp(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     source_pathname: String,
     target_pathname: String,
   }
 
+  let arg0 = args.get(0).unwrap().clone();
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("cp: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { source_pathname, target_pathname }) => {
       let source_vinode = match kernel.vfs.lookup_path(&source_pathname) {
         Ok(vinode) => vinode,
         Err(Errno::ENOENT(_)) => {
-          println!("cp: {source_pathname}: No such file or directory");
+          println!("{arg0}: {source_pathname}: No such file or directory");
           return EXIT_ENOENT;
         },
         Err(errno) => {
-          println!("cp: unexpected error: {errno:?}");
+          println!("{arg0}: unexpected error: {errno:?}");
           return EXIT_FAILURE;
         },
       };
 
       // Guard for target already existing
       if let Ok(_) = kernel.vfs.lookup_path(&target_pathname) {
-        println!("cp: {target_pathname}: Already exists");
+        println!("{arg0}: {target_pathname}: Already exists");
         return EXIT_FAILURE;
       }
 
-      println!("cp: source_pathname is {source_pathname} source_vinode.mode is {:03b}", source_vinode.mode.file_type());
+      println!("{arg0}: source_pathname is {source_pathname} source_vinode.mode is {:03b}", source_vinode.mode.file_type());
 
       // Main part - base file case or recurse
       if source_vinode.mode.file_type() == FileModeType::File as u8 {
-        println!("cp: file case");
+        println!("{arg0}: file case");
         let source_bytes = kernel.vfs.read_file(&source_pathname, AddressSize::MAX).unwrap();
         kernel.vfs.create_file(&target_pathname).unwrap();
         kernel.vfs.write_file(&target_pathname, &source_bytes).unwrap();
         EXIT_SUCCESS
       } else {
-        println!("cp: dir case (creating dir: {target_pathname})");
+        println!("{arg0}: dir case (creating dir: {target_pathname})");
         kernel.vfs.create_dir(&target_pathname).unwrap();
         let dir = kernel.vfs.read_dir(&source_pathname).unwrap();
         for (name, _) in dir
@@ -633,7 +649,7 @@ pub fn cp(args: Args, kernel: &mut Kernel) -> AddressSize {
           let cloned_arg0 = args.get(0).unwrap().clone();
           let new_source_pathname = format!("{source_pathname}/{name}");
           let new_target_pathname = format!("{target_pathname}/{name}");
-          println!("cp: descending into '({source_pathname})'");
+          println!("{arg0}: descending into '({source_pathname})'");
           let exit_status = cp(vec![cloned_arg0, new_source_pathname, new_target_pathname], kernel);
           if exit_status != EXIT_SUCCESS {
             return exit_status;
@@ -646,6 +662,7 @@ pub fn cp(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn write(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     pathname: String,
@@ -662,15 +679,15 @@ pub fn write(args: Args, kernel: &mut Kernel) -> AddressSize {
       match kernel.vfs.write_file(&pathname, bytes) {
         Ok(_) => EXIT_SUCCESS,
         Err(Errno::ENOENT(_)) => {
-          println!("write: {pathname}: No such file or directory");
+          println!("{arg0}: {pathname}: No such file or directory");
           return EXIT_ENOENT;
         },
         Err(Errno::EISDIR(_)) => {
-          println!("write: {pathname}: Is a directory");
+          println!("{arg0}: {pathname}: Is a directory");
           return EXIT_FAILURE;
         },
         Err(errno) => {
-          println!("write: unexpected error: {errno:?}");
+          println!("{arg0}: unexpected error: {errno:?}");
           return EXIT_FAILURE;
         },
       }
@@ -679,6 +696,7 @@ pub fn write(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn ed(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     pathname: String,
@@ -686,7 +704,7 @@ pub fn ed(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("ed: parse error: {message}");
+      println!("{arg0}: parse error: {message}");
       1
     },
     Ok(BinArgs { pathname }) => {
@@ -694,15 +712,15 @@ pub fn ed(args: Args, kernel: &mut Kernel) -> AddressSize {
       let bytes = match kernel.vfs.read_file(&pathname, AddressSize::MAX) {
         Ok(bytes) => bytes,
         Err(Errno::ENOENT(_)) => {
-          println!("ed: {pathname}: No such file or directory");
+          println!("{arg0}: {pathname}: No such file or directory");
           return EXIT_ENOENT;
         },
         Err(Errno::EISDIR(_)) => {
-          println!("ed: {pathname}: Is a directory");
+          println!("{arg0}: {pathname}: Is a directory");
           return EXIT_FAILURE;
         },
         Err(errno) => {
-          println!("ed: unexpected error: {errno:?}");
+          println!("{arg0}: unexpected error: {errno:?}");
           return EXIT_FAILURE;
         },
       };
@@ -718,7 +736,7 @@ pub fn ed(args: Args, kernel: &mut Kernel) -> AddressSize {
         Ok(_) => {
         },
         Err(message) => {
-          println!("ed: error while creating platform-provided temp file: {message:#?}");
+          println!("{arg0}: error while creating platform-provided temp file: {message:#?}");
           return EXIT_FAILURE;
         },
       }
@@ -728,7 +746,7 @@ pub fn ed(args: Args, kernel: &mut Kernel) -> AddressSize {
           .arg(&file_path)
           .status() 
       {
-        println!("ed: error while opening platform-provided editor: {message:#?}");
+        println!("{arg0}: error while opening platform-provided editor: {message:#?}");
         return EXIT_FAILURE;
       }
 
@@ -740,7 +758,7 @@ pub fn ed(args: Args, kernel: &mut Kernel) -> AddressSize {
         Ok(_) => {
         },
         Err(message) => {
-          println!("ed: error while reading back edited platform-provided temp file: {message:#?}");
+          println!("{arg0}: error while reading back edited platform-provided temp file: {message:#?}");
           return EXIT_FAILURE;
         },
       }
@@ -749,7 +767,7 @@ pub fn ed(args: Args, kernel: &mut Kernel) -> AddressSize {
       return match kernel.vfs.write_file(&pathname, &edited_bytes) {
         Ok(_) => EXIT_SUCCESS,
         Err(errno) => {
-          println!("ed: unexpected error: {errno:?}");
+          println!("{arg0}: unexpected error: {errno:?}");
           EXIT_FAILURE
         },
       }
@@ -758,6 +776,7 @@ pub fn ed(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn chmod(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     mode: String,
@@ -766,18 +785,18 @@ pub fn chmod(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("chmod: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname, mode: new_mode_string }) => {
       let old_mode = match kernel.vfs.lookup_path(&pathname) {
         Ok(vinode) => vinode.mode,
         Err(Errno::ENOENT(_)) => {
-          println!("chmod: {pathname}: No such file or directory");
+          println!("{arg0}: {pathname}: No such file or directory");
           return EXIT_ENOENT;
         },
         Err(errno) => {
-          println!("chmod: unexpected error: {errno:?}");
+          println!("{arg0}: unexpected error: {errno:?}");
           return EXIT_FAILURE;
         },
       };
@@ -787,7 +806,7 @@ pub fn chmod(args: Args, kernel: &mut Kernel) -> AddressSize {
         .is_match(&new_mode_string)
         .unwrap()
       {
-        println!("chmod: invalid mode: '{new_mode_string}'");
+        println!("{arg0}: invalid mode: '{new_mode_string}'");
         return EXIT_FAILURE;
       }
 
@@ -803,7 +822,7 @@ pub fn chmod(args: Args, kernel: &mut Kernel) -> AddressSize {
       match kernel.vfs.change_mode(&pathname, new_mode) {
         Ok(_) => EXIT_SUCCESS,
         Err(errno) => {
-          println!("chmod: unexpected error: {errno:?}");
+          println!("{arg0}: unexpected error: {errno:?}");
           return EXIT_FAILURE;
         },
       }
@@ -812,6 +831,7 @@ pub fn chmod(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn chown(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     new_owners_string: String,
@@ -820,7 +840,7 @@ pub fn chown(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("chown: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname, new_owners_string }) => {
@@ -831,11 +851,11 @@ pub fn chown(args: Args, kernel: &mut Kernel) -> AddressSize {
       } = match kernel.vfs.lookup_path(&pathname) {
         Ok(vinode) => vinode,
         Err(Errno::ENOENT(_)) => {
-          println!("chown: {pathname}: No such file or directory");
+          println!("{arg0}: {pathname}: No such file or directory");
           return EXIT_ENOENT;
         },
         Err(errno) => {
-          println!("chown: unexpected error: {errno:?}");
+          println!("{arg0}: unexpected error: {errno:?}");
           return EXIT_FAILURE;
         },
       };
@@ -859,7 +879,7 @@ pub fn chown(args: Args, kernel: &mut Kernel) -> AddressSize {
       {
         uid
       } else {
-        println!("chown: invalid user: '{new_owners_string}'");
+        println!("{arg0}: invalid user: '{new_owners_string}'");
         return EXIT_FAILURE;
       };
 
@@ -872,14 +892,14 @@ pub fn chown(args: Args, kernel: &mut Kernel) -> AddressSize {
       {
         gid
       } else {
-        println!("chown: invalid group: '{new_owners_string}'");
+        println!("{arg0}: invalid group: '{new_owners_string}'");
         return EXIT_FAILURE;
       };
 
       match kernel.vfs.change_owners(&pathname, uid, gid) {
         Ok(_) => EXIT_SUCCESS,
         Err(errno) => {
-          println!("chown: unexpected error: {errno:?}");
+          println!("{arg0}: unexpected error: {errno:?}");
           EXIT_FAILURE
         },
       }
@@ -889,6 +909,7 @@ pub fn chown(args: Args, kernel: &mut Kernel) -> AddressSize {
 
 // System related stuff
 pub fn uname(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
   }
@@ -906,6 +927,7 @@ pub fn uname(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn lsblk(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   let device_table = kernel.devices();
   let mount_points = &kernel.vfs.mount_points;
   println!("{device_table:#?}");
@@ -914,6 +936,7 @@ pub fn lsblk(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn dumpe5fs(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     pathname: String,
@@ -926,7 +949,7 @@ pub fn dumpe5fs(args: Args, kernel: &mut Kernel) -> AddressSize {
     }
     Ok(BinArgs { pathname }) => {
       // let (mount_point, internal_path) = kernel.vfs.match_mount_point(&pathname).unwrap();
-      // let mounted_fs = kernel.vfs.mount_points.get_mut(&mount_point).expect("VFS::lookup_path: we know that mount_point exist");  
+      // let mounted_fs = kernel.vfs.mount_points.get_mut(&mount_point).expect("{arg0}::lookup_path: we know that mount_point exist");  
       //
       // mounted_fs.driver.as_any().downcast_mut()
       //
@@ -938,6 +961,7 @@ pub fn dumpe5fs(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn mount(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     #[clap(short = 't', long, default_value_t = FilesystemType::e5fs)]
@@ -949,7 +973,7 @@ pub fn mount(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mount: error: {message}");
+      println!("{arg0}: error: {message}");
       1
     }
     Ok(BinArgs {
@@ -959,7 +983,7 @@ pub fn mount(args: Args, kernel: &mut Kernel) -> AddressSize {
     }) => match kernel.mount(&source, &target, filesystem_type) {
       Ok(_) => 0,
       Err(Errno::EINVAL(message)) => {
-        println!("mount: error: {message}");
+        println!("{arg0}: error: {message}");
         1
       }
       Err(_) => unreachable!(),
@@ -970,13 +994,14 @@ pub fn mount(args: Args, kernel: &mut Kernel) -> AddressSize {
 // User related stuff
 
 pub fn id(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
   }
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("id: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { }) => {
@@ -1011,13 +1036,14 @@ pub fn id(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn whoami(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
   }
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("whoami: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     }
     Ok(BinArgs {}) => {
@@ -1035,6 +1061,7 @@ pub fn whoami(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn su(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     user: String,
@@ -1042,7 +1069,7 @@ pub fn su(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("su: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { user }) => {
@@ -1055,7 +1082,7 @@ pub fn su(args: Args, kernel: &mut Kernel) -> AddressSize {
         kernel.current_uid = uid;
         EXIT_SUCCESS
       } else {
-        println!("su: user '{user}' does not exist; you might want to reread /etc/passwd");
+        println!("{arg0}: user '{user}' does not exist; you might want to reread /etc/passwd");
         EXIT_FAILURE
       }
     },
@@ -1063,6 +1090,7 @@ pub fn su(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn useradd(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     pathname: String,
@@ -1080,6 +1108,7 @@ pub fn useradd(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn usermod(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     pathname: String,
