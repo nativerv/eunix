@@ -66,7 +66,7 @@ pub fn main() {
     (String::from("/rmdir"),        binaries::rmdir),     // [ ]
     (String::from("/touch"),        binaries::touch),     // [x]
     (String::from("/rm"),           binaries::rm),        // [x]
-    (String::from("/mv"),           binaries::mv),        // [ ]
+    (String::from("/mv"),           binaries::mv),        // [x]
     (String::from("/cp"),           binaries::cp),        // [x]
     (String::from("/write"),        binaries::write),     // [x]
     (String::from("/ed"),           binaries::ed),        // [x]

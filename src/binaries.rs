@@ -5,10 +5,11 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use clap::Parser;
 use fancy_regex::Regex;
 use itertools::Itertools;
-use std::io::{Read, Write};
+use sha2::{Sha256, Digest};
+use std::io::{Read, Write, stdout, stdin};
 
 use crate::eunix::devfs::DeviceFilesystem;
-use crate::eunix::fs::{FilesystemType, VINode};
+use crate::eunix::fs::{FilesystemType, VINode, Id, NOBODY_UID, NOBODY_GID};
 use crate::eunix::kernel::{Times, ROOT_GID, ROOT_UID};
 use crate::util::{self, unixtime};
 use crate::{
@@ -248,7 +249,7 @@ pub fn df(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => {
@@ -339,7 +340,7 @@ pub fn mkfs_e5fs(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     }
     Ok(parsed_args) => {
@@ -357,16 +358,16 @@ pub fn mkfs_e5fs(args: Args, kernel: &mut Kernel) -> AddressSize {
         {
             Ok(realpath) => realpath,
             Err(Errno::ENOENT(_)) => {
-              println!("mkfs.e5fs: {dev_pathname}: No such file or directory");
+              println!("{arg0}: {dev_pathname}: No such file or directory");
               return EXIT_ENOENT;
             },
             Err(errno) => {
-              println!("mkfs.e5fs: unexpected error: {errno:?}");
+              println!("{arg0}: unexpected error: {errno:?}");
               return EXIT_FAILURE;
             },
         }
       } else {
-        println!("mkfs.e5fs: {dev_pathname}: Not a device");
+        println!("{arg0}: {dev_pathname}: Not a device");
         return EXIT_FAILURE;
       };
 
@@ -377,7 +378,7 @@ pub fn mkfs_e5fs(args: Args, kernel: &mut Kernel) -> AddressSize {
       ) {
         Ok(_) => EXIT_SUCCESS,
         Err(errno) => {
-          println!("mkfs.e5fs: unexpected error: {errno:?}");
+          println!("{arg0}: unexpected error: {errno:?}");
           return EXIT_FAILURE;
         },
       }
@@ -671,7 +672,7 @@ pub fn write(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     },
     Ok(BinArgs { pathname, text }) => {
@@ -916,7 +917,7 @@ pub fn uname(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { }) => {
@@ -944,7 +945,7 @@ pub fn dumpe5fs(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => {
@@ -1093,21 +1094,246 @@ pub fn useradd(args: Args, kernel: &mut Kernel) -> AddressSize {
   let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
-    pathname: String,
+    #[clap(short = 'g', long)]
+    primary_group: String,
+
+    #[clap(short = 'c', long, default_value = "")]
+    comment: String,
+
+    #[clap(short = 'm', long)]
+    home: String,
+
+    #[clap(short = 'G', long, multiple_occurrences = true)]
+    supplementary_groups: Vec<String>,
+
+    #[clap(short = 's', long, multiple_occurrences = true, default_value = "")]
+    shell: String,
+
+    name: String,
   }
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
+      EXIT_FAILURE
+    }
+    Ok(BinArgs { name, primary_group, comment, home, supplementary_groups, shell }) => {
+      let bytes = match kernel.vfs.read_file("/etc/passwd", AddressSize::MAX) {
+        Ok(bytes) => bytes,
+        Err(Errno::EACCES(_)) => {
+          println!("{arg0}: Permission denied");
+          return EXIT_FAILURE
+        },
+        Err(errno) => {
+          println!("{arg0}: unexpected error: {errno:?}");
+          return EXIT_FAILURE
+        },
+      };
+      let contents = String::from_utf8(bytes).unwrap();
+      let mut passwds = Passwd::parse_passwds(&contents);
+
+      let mut unclaimed_uids = (1..NOBODY_UID)
+        .filter(|uid| !passwds.iter().map(|p| p.uid).contains(uid));
+
+      // Guard for user already existing
+      if passwds.iter().map(|p| &p.name).contains(&name) {
+        println!("{arg0}: '{name}': User already exists");
+        return EXIT_FAILURE;
+      }
+
+      let mut password_one = String::new();
+      let mut password_two = String::new();
+
+      // Read password from user
+      print!("New password: ");
+      stdout().flush().unwrap();
+      stdin().read_line(&mut password_one).unwrap();
+      print!("Retype password: ");
+      stdout().flush().unwrap();
+      stdin().read_line(&mut password_two).unwrap();
+
+      if password_one != password_two {
+        println!("{arg0}: Passwords do not match");
+        return EXIT_FAILURE;
+      }
+
+      let password_hash = hex::encode(Sha256::digest(&password_one.as_bytes()));
+
+      passwds.push(Passwd {
+        name: name.clone(),
+        password: password_hash,
+        uid: unclaimed_uids.next().unwrap(),
+        gid: NOBODY_GID,
+        comment,
+        home,
+        shell,
+      });
+
+      let serialized = Passwd::serialize_passwds(&passwds);
+      
+      match kernel.vfs.write_file("/etc/passwd", serialized.as_bytes()) {
+        Ok(_) => EXIT_SUCCESS,
+        Err(Errno::EACCES(_)) => {
+          println!("{arg0}: Permission denied");
+          EXIT_FAILURE
+        },
+        Err(errno) => {
+          println!("{arg0}: unexpected error: {errno:?}");
+          return EXIT_FAILURE
+        },
+      }
+    },
+  }
+}
+
+struct Passwd {
+  name: String,
+  password: String,
+  uid: Id,
+  gid: Id,
+  comment: String,
+  home: String,
+  shell: String,
+}
+
+enum ParseError {
+  BadLine,
+  InvalidUid,
+  InvalidGid,
+}
+
+impl Passwd {
+  /// Parse `name:password:uid:gid:comment:home:shell`
+  /// lines - invalid ones omitted
+  fn parse_passwds(string: &str) -> Vec<Passwd> {
+    string
+      .lines()
+      .flat_map(|line| {
+        if !Regex::new("^.*:.*:.*:.*:.*:.*:.*$").unwrap().is_match(line).unwrap() {
+          return Err(ParseError::BadLine);
+        }
+
+        let mut split = line.split(":");
+
+        let name = split.next().unwrap_or("").to_owned();
+        let password = split.next().unwrap_or("").to_owned();
+        let uid = match split.next().map(str::parse::<Id>).ok_or(ParseError::InvalidUid)? {
+            Ok(uid) => uid,
+            Err(_) => {
+              return Err(ParseError::InvalidUid);
+            },
+        };
+        let gid = match split.next().map(str::parse::<Id>).ok_or(ParseError::InvalidGid)? {
+          Ok(gid) => gid,
+          Err(_) => {
+            return Err(ParseError::InvalidGid);
+          },
+        };
+        let comment = split.next().unwrap_or("").to_owned();
+        let home = split.next().unwrap_or("").to_owned();
+        let shell = split.next().unwrap_or("").to_owned();
+
+        Ok(Passwd {
+          name,
+          password,
+          uid,
+          gid,
+          comment,
+          home,
+          shell,
+        })
+      })
+      .collect()
+  }
+
+  fn to_string(&self) -> String {
+    let Passwd { name, password, uid, gid, comment, home, shell } = self;
+
+    format!("{name}:{password}:{uid}:{gid}:{comment}:{home}:{shell}")
+  }
+
+  fn serialize_passwds(passwds: &[Passwd]) -> String {
+    passwds
+      .into_iter()
+      .map(Self::to_string)
+      .join("\n")
+  }
+}
+
+pub fn usermod(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
+  #[derive(Debug, Parser)]
+  struct BinArgs {
+    name: String,
+  }
+
+  match BinArgs::try_parse_from(args.iter()) {
+    Err(message) => {
+      println!("{arg0}: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => {
+    Ok(BinArgs { name }) => {
       EXIT_SUCCESS
     },
   }
 }
 
-pub fn usermod(args: Args, kernel: &mut Kernel) -> AddressSize {
+pub fn userdel(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
+  #[derive(Debug, Parser)]
+  struct BinArgs {
+    name: String,
+  }
+
+  match BinArgs::try_parse_from(args.iter()) {
+    Err(message) => {
+      println!("{arg0}: invalid arguments: {message}");
+      1
+    }
+    Ok(BinArgs { name }) => {
+      let bytes = match kernel.vfs.read_file("/etc/passwd", AddressSize::MAX) {
+        Ok(bytes) => bytes,
+        Err(Errno::EACCES(_)) => {
+          println!("{arg0}: Permission denied");
+          return EXIT_FAILURE
+        },
+        Err(errno) => {
+          println!("{arg0}: unexpected error: {errno:?}");
+          return EXIT_FAILURE
+        },
+      };
+      let contents = String::from_utf8(bytes).unwrap();
+      let passwds = Passwd::parse_passwds(&contents);
+
+      // Guard for user not existing
+      if !passwds.iter().map(|p| &p.name).contains(&name) {
+        println!("{arg0}: user '{name}' does not exist");
+        return EXIT_FAILURE;
+      }
+
+      let passwds: Vec<Passwd> = passwds
+        .into_iter()
+        .filter(|passwd| passwd.name != name)
+        .collect();
+
+      let serialized = Passwd::serialize_passwds(&passwds);
+
+      match kernel.vfs.write_file("/etc/passwd", serialized.as_bytes()) {
+        Ok(_) => EXIT_SUCCESS,
+        Err(Errno::EACCES(_)) => {
+          println!("{arg0}: Permission denied");
+          EXIT_FAILURE
+        },
+        Err(errno) => {
+          println!("{arg0}: unexpected error: {errno:?}");
+          return EXIT_FAILURE
+        },
+      }
+    },
+  }
+}
+
+pub fn groupmod(args: Args, kernel: &mut Kernel) -> AddressSize {
   let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
@@ -1116,41 +1342,7 @@ pub fn usermod(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
-      1
-    }
-    Ok(BinArgs { pathname }) => {
-      EXIT_SUCCESS
-    },
-  }
-}
-
-pub fn userdel(args: Args, kernel: &mut Kernel) -> AddressSize {
-  #[derive(Debug, Parser)]
-  struct BinArgs {
-    pathname: String,
-  }
-
-  match BinArgs::try_parse_from(args.iter()) {
-    Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
-      1
-    }
-    Ok(BinArgs { pathname }) => {
-      EXIT_SUCCESS
-    },
-  }
-}
-
-pub fn groupmod(args: Args, kernel: &mut Kernel) -> AddressSize {
-  #[derive(Debug, Parser)]
-  struct BinArgs {
-    pathname: String,
-  }
-
-  match BinArgs::try_parse_from(args.iter()) {
-    Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     }
     Ok(BinArgs { pathname }) => {
@@ -1160,6 +1352,7 @@ pub fn groupmod(args: Args, kernel: &mut Kernel) -> AddressSize {
 }
 
 pub fn groupdel(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
   #[derive(Debug, Parser)]
   struct BinArgs {
     pathname: String,
@@ -1167,7 +1360,7 @@ pub fn groupdel(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("{arg0}: invalid arguments: {message}");
       1
     },
     Ok(BinArgs { pathname }) => {
