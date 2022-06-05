@@ -677,7 +677,7 @@ impl Filesystem for E5FSFilesystem {
     dir.entries
       .get(&final_component)
       .map(|entry| self.read_inode(entry.inode_number).into())
-      .ok_or(Errno::ENOENT(format!("e5fs.lookup_path: no such file or directory {final_component} (get(final_component))")))
+      .ok_or(Errno::ENOENT(format!("e5fs.lookup_path: no such file or directory {final_component} (get(final_component)) (pathname: {pathname})")))
   }
 
 fn name(&self) -> String { 
@@ -865,6 +865,16 @@ impl E5FSFilesystem {
 
   /// Replace specified inode in `free_inode_numbers` with `NO_ADDRESS`
   fn claim_free_inode(&mut self) -> Result<AddressSize, Errno> {
+    if self
+      .superblock
+      .free_inode_numbers
+      .iter()
+      .filter(|n| **n != NO_ADDRESS)
+      .count() <= 1
+    {
+      self.refill_free_inode_numbers()?;
+    }
+
     let (index, inode_number) = self
       .superblock
       .free_inode_numbers
@@ -873,7 +883,7 @@ impl E5FSFilesystem {
       .enumerate()
       .find(|(_, inode_number)| **inode_number != NO_ADDRESS)
       .map(|(index, inode_number)| (index, *inode_number))
-      .ok_or(Errno::ENOSPC(format!("no free inodes left (in cache, todo: fix me)")))?;
+      .ok_or(Errno::ENOSPC(format!("no free inodes left")))?;
 
     // Replace and write inode number in superblock with NO_ADDRESS
     *self
@@ -1067,6 +1077,10 @@ impl E5FSFilesystem {
 
     inode.direct_block_numbers
       .into_iter()
+  }
+
+  fn iter_inode_numbers(&self, inode_number: AddressSize) -> impl Iterator<Item = AddressSize> {
+    1..self.fs_info.inodes_count
   }
 
   // Errors:
@@ -1389,6 +1403,67 @@ impl E5FSFilesystem {
     self.write_inode(&inode, inode_number)?;
 
     Ok(inode)
+  }
+
+  fn refill_free_inode_numbers(&mut self) 
+    -> Result<(), Errno> {
+    // for ((i, _), free_inode_number) in self
+    //   .superblock
+    //   .free_inode_numbers
+    //   .into_iter()
+    //   .enumerate()
+    //   .filter(|(_, n)| *n == NO_ADDRESS) 
+    //   .zip((1..self.fs_info.inodes_count)
+    //     .map(|n| Some(self.read_inode(n)))
+    //     .filter(|inode| inode.unwrap().mode.free() == 1)
+    //     .chain(std::iter::repeat(None))
+    //   )
+    // {
+    //   let free_inode_number = 
+    //     // FIXME: will error even if we have some free inodes left,
+    //     // but not enough to refill the whole `free_inode_numbers`
+    //     free_inode_number
+    //       .ok_or(Errno::ENOSPC(format!("e5fs::refill_free_inode_numbers: no free inodes left in the filesystem")))?
+    //       .number
+    //   ;
+    //   *self
+    //     .superblock
+    //     .free_inode_numbers
+    //     .get_mut(i)
+    //     .expect("should exist") = free_inode_number
+    //   ;
+    // }
+    //
+    let new_free_inode_numbers: Vec<AddressSize> = self
+      .superblock
+      .free_inode_numbers
+      .into_iter()
+      .zip((1..self.fs_info.inodes_count)
+        .map(|n| Some(self.read_inode(n)))
+        .filter(|inode| inode.unwrap().mode.free() == 1)
+        .chain(std::iter::repeat(None))
+      )
+      .flat_map(|(inode_number, free_inode_number)| {
+        if inode_number == NO_ADDRESS {
+          free_inode_number.map(|inode| inode.number)
+        } else {
+          Some(inode_number)
+        }
+      })
+      .collect()
+    ;
+
+    // FIXME: will error even if we have some free inodes left,
+    // but not enough to refill the whole `free_inode_numbers`
+    if new_free_inode_numbers.len() != self.superblock.free_inode_numbers.len() {
+      return Err(Errno::ENOSPC(format!("e5fs::refill_free_inode_numbers: no free inodes left in the filesystem")));
+    }
+
+    for (i, inode_number) in &mut self.superblock.free_inode_numbers.iter_mut().enumerate() {
+      *inode_number = *new_free_inode_numbers.get(i).unwrap();
+    } 
+
+    self.write_superblock(&self.superblock.clone())
   }
 }
 

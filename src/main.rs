@@ -77,7 +77,7 @@ pub fn main() {
     (String::from("/lsblk"),        binaries::lsblk),     // [x]
     (String::from("/id"),           binaries::id),        // [x]
     (String::from("/whoami"),       binaries::whoami),    // [x]
-    (String::from("/su"),           binaries::su),        // [ ]
+    (String::from("/su"),           binaries::su),        // [x]
     (String::from("/useradd"),      binaries::useradd),   // [ ]
     (String::from("/usermod"),      binaries::usermod),   // [ ]
     (String::from("/userdel"),      binaries::userdel),   // [ ]

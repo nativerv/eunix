@@ -387,7 +387,7 @@ pub fn mkdir(args: Args, kernel: &mut Kernel) -> AddressSize {
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("mkdir: invalid arguments: {message}");
       1
     },
     Ok(BinArgs { pathname }) => {
@@ -546,7 +546,13 @@ pub fn rm(args: Args, kernel: &mut Kernel) -> AddressSize {
               return exit_status;
             }
           }
-          EXIT_SUCCESS
+          return match kernel.vfs.remove_file(&pathname) {
+            Ok(()) => EXIT_SUCCESS,
+            Err(errno) => {
+              println!("rm: unexpected error: {errno:?}");
+              EXIT_FAILURE
+            },
+          } 
         },
         Err(errno) => {
           println!("rm: unexpected error: {errno:?}");
@@ -560,15 +566,16 @@ pub fn rm(args: Args, kernel: &mut Kernel) -> AddressSize {
 pub fn mv(args: Args, kernel: &mut Kernel) -> AddressSize {
   #[derive(Debug, Parser)]
   struct BinArgs {
-    pathname: String,
+    source_pathname: String,
+    target_pathname: String,
   }
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("mv: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => {
+    Ok(BinArgs { source_pathname, target_pathname }) => {
       EXIT_SUCCESS
     },
   }
@@ -577,16 +584,63 @@ pub fn mv(args: Args, kernel: &mut Kernel) -> AddressSize {
 pub fn cp(args: Args, kernel: &mut Kernel) -> AddressSize {
   #[derive(Debug, Parser)]
   struct BinArgs {
-    pathname: String,
+    source_pathname: String,
+    target_pathname: String,
   }
 
   match BinArgs::try_parse_from(args.iter()) {
     Err(message) => {
-      println!("mkfs.e5fs: invalid arguments: {message}");
+      println!("cp: invalid arguments: {message}");
       1
     }
-    Ok(BinArgs { pathname }) => {
-      EXIT_SUCCESS
+    Ok(BinArgs { source_pathname, target_pathname }) => {
+      let source_vinode = match kernel.vfs.lookup_path(&source_pathname) {
+        Ok(vinode) => vinode,
+        Err(Errno::ENOENT(_)) => {
+          println!("cp: {source_pathname}: No such file or directory");
+          return EXIT_ENOENT;
+        },
+        Err(errno) => {
+          println!("cp: unexpected error: {errno:?}");
+          return EXIT_FAILURE;
+        },
+      };
+
+      // Guard for target already existing
+      if let Ok(_) = kernel.vfs.lookup_path(&target_pathname) {
+        println!("cp: {target_pathname}: Already exists");
+        return EXIT_FAILURE;
+      }
+
+      println!("cp: source_pathname is {source_pathname} source_vinode.mode is {:03b}", source_vinode.mode.file_type());
+
+      // Main part - base file case or recurse
+      if source_vinode.mode.file_type() == FileModeType::File as u8 {
+        println!("cp: file case");
+        let source_bytes = kernel.vfs.read_file(&source_pathname, AddressSize::MAX).unwrap();
+        kernel.vfs.create_file(&target_pathname).unwrap();
+        kernel.vfs.write_file(&target_pathname, &source_bytes).unwrap();
+        EXIT_SUCCESS
+      } else {
+        println!("cp: dir case (creating dir: {target_pathname})");
+        kernel.vfs.create_dir(&target_pathname).unwrap();
+        let dir = kernel.vfs.read_dir(&source_pathname).unwrap();
+        for (name, _) in dir
+          .entries
+          .iter()
+          .filter(|(name, _)| **name != "." && **name != "..") 
+        {
+          let cloned_arg0 = args.get(0).unwrap().clone();
+          let new_source_pathname = format!("{source_pathname}/{name}");
+          let new_target_pathname = format!("{target_pathname}/{name}");
+          println!("cp: descending into '({source_pathname})'");
+          let exit_status = cp(vec![cloned_arg0, new_source_pathname, new_target_pathname], kernel);
+          if exit_status != EXIT_SUCCESS {
+            return exit_status;
+          }
+        }
+        EXIT_SUCCESS 
+      }
     },
   }
 }
@@ -857,6 +911,30 @@ pub fn lsblk(args: Args, kernel: &mut Kernel) -> AddressSize {
   println!("{device_table:#?}");
   println!("mount_points: {mount_points:#?}");
   EXIT_SUCCESS
+}
+
+pub fn dumpe5fs(args: Args, kernel: &mut Kernel) -> AddressSize {
+  #[derive(Debug, Parser)]
+  struct BinArgs {
+    pathname: String,
+  }
+
+  match BinArgs::try_parse_from(args.iter()) {
+    Err(message) => {
+      println!("mkfs.e5fs: invalid arguments: {message}");
+      1
+    }
+    Ok(BinArgs { pathname }) => {
+      // let (mount_point, internal_path) = kernel.vfs.match_mount_point(&pathname).unwrap();
+      // let mounted_fs = kernel.vfs.mount_points.get_mut(&mount_point).expect("VFS::lookup_path: we know that mount_point exist");  
+      //
+      // mounted_fs.driver.as_any().downcast_mut()
+      //
+      // println!("{device_table:#?}");
+      // println!("mount_points: {mount_points:#?}");
+      EXIT_SUCCESS
+    }
+  }
 }
 
 pub fn mount(args: Args, kernel: &mut Kernel) -> AddressSize {
