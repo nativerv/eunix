@@ -556,7 +556,7 @@ impl Filesystem for E5FSFilesystem {
     Ok(new_vinode)
   }
 
-  fn read_dir(&self, pathname: &str)
+  fn read_dir(&mut self, pathname: &str)
     -> Result<VDirectory, Errno> {
     // // Guard for file_type = directory
     // match vinode
@@ -579,7 +579,7 @@ impl Filesystem for E5FSFilesystem {
     Ok(dir.into())
   }
 
-  fn stat(&self, pathname: &str) 
+  fn stat(&mut self, pathname: &str) 
     -> Result<FileStat, Errno> {
     let inode_number = self.lookup_path(pathname)?.number;
     let INode {
@@ -618,7 +618,8 @@ impl Filesystem for E5FSFilesystem {
 
   fn change_owners(&mut self, pathname: &str, uid: Id, gid: Id) 
     -> Result<(), Errno> {
-    let mut inode = self.read_inode(self.lookup_path(pathname)?.number);
+    let inode_number = self.lookup_path(pathname)?.number;
+    let mut inode = self.read_inode(inode_number);
     inode.uid = uid;
     inode.gid = gid;
 
@@ -627,7 +628,8 @@ impl Filesystem for E5FSFilesystem {
 
   fn change_times(&mut self, pathname: &str, times: Times)
     -> Result<(), Errno> {
-    let mut inode = self.read_inode(self.lookup_path(pathname)?.number);
+    let inode_number = self.lookup_path(pathname)?.number;
+    let mut inode = self.read_inode(inode_number);
     inode.atime = times.atime;
     inode.mtime = times.mtime;
     inode.ctime = times.ctime;
@@ -638,7 +640,7 @@ impl Filesystem for E5FSFilesystem {
   // Поиск файла в файловой системе. Возвращает INode фала.
   // Для VFS сначала матчинг на маунт-поинты и вызов lookup_path("/mount/point") у конкретной файловой системы;
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
-  fn lookup_path(&self, pathname: &str)
+  fn lookup_path(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
     let split_pathname = VFS::split_path(pathname)?;
 

@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::process::Command;
+use crate::eunix::users::{Passwd, ParseError};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use clap::Parser;
@@ -25,6 +26,8 @@ pub const EXIT_ENOENT: AddressSize = 127;
 pub const EXIT_SUCCESS: AddressSize = 0;
 pub const EXIT_FAILURE: AddressSize = 1;
 
+pub const PASSWD_PATH: &'static str = "/etc/passwd";
+
 // FS reading stuff
 
 pub fn ls(args: Args, kernel: &mut Kernel) -> AddressSize {
@@ -47,6 +50,10 @@ pub fn ls(args: Args, kernel: &mut Kernel) -> AddressSize {
       Err(Errno::ENOTDIR(_)) => {
         println!("{arg0}: not a directory: {pathname}");
         return 1;
+      },
+      Err(Errno::EACCES(_)) => {
+        println!("{arg0}: '{pathname}': Permission denied");
+        return EXIT_FAILURE
       },
       Err(errno) => {
         println!("{arg0}: unexpected error: {errno:?}");
@@ -177,7 +184,6 @@ pub fn ls(args: Args, kernel: &mut Kernel) -> AddressSize {
 pub fn stat(args: Args, kernel: &mut Kernel) -> AddressSize {
   let arg0 = args.get(0).unwrap().clone();
   if let Some(pathname) = args.get(1) {
-    println!("pathname_before_pass_to_bin_stat: {pathname}");
     let FileStat {
       mode,
       size,
@@ -195,6 +201,10 @@ pub fn stat(args: Args, kernel: &mut Kernel) -> AddressSize {
       Err(Errno::ENOENT(_)) => {
         println!("{arg0}: {pathname}: No such file or directory");
         return EXIT_ENOENT;
+      },
+      Err(Errno::EACCES(_)) => {
+        println!("{arg0}: '{pathname}': Permission denied");
+        return EXIT_FAILURE
       },
       Err(errno) => {
         println!("{arg0}: unexpected error: {errno:?}");
@@ -302,6 +312,10 @@ pub fn cat(args: Args, kernel: &mut Kernel) -> AddressSize {
           println!("{arg0}: {pathname}: Is a directory");
           return EXIT_FAILURE;
         },
+        Err(Errno::EACCES(_)) => {
+          println!("{arg0}: '{pathname}': Permission denied");
+          return EXIT_FAILURE
+        },
         Err(errno) => {
           println!("{arg0}: unexpected error: {errno:?}");
           return EXIT_FAILURE;
@@ -405,6 +419,10 @@ pub fn mkdir(args: Args, kernel: &mut Kernel) -> AddressSize {
           println!("{arg0}: cannot create directory: '{pathname}': No such file or directory");
           EXIT_ENOENT
         },
+        Err(Errno::EACCES(_)) => {
+          println!("{arg0}: '{pathname}': Permission denied");
+          return EXIT_FAILURE
+        },
         Err(errno) => {
           println!("{arg0}: unexpected error: {errno:?}");
           EXIT_FAILURE
@@ -454,6 +472,10 @@ pub fn touch(args: Args, kernel: &mut Kernel) -> AddressSize {
           btime: vinode.btime,
         }) {
           Ok(_) => EXIT_SUCCESS,
+          Err(Errno::EACCES(_)) => {
+            println!("{arg0}: '{pathname}': Permission denied");
+            return EXIT_FAILURE
+          },
           Err(errno) => {
             println!("{arg0}: unexpected error: {errno:?}");
             EXIT_FAILURE
@@ -468,6 +490,10 @@ pub fn touch(args: Args, kernel: &mut Kernel) -> AddressSize {
             Ok(_) => {
               match kernel.vfs.create_file(&pathname) {
                 Ok(_) => EXIT_SUCCESS,
+                Err(Errno::EACCES(_)) => {
+                  println!("{arg0}: '{pathname}': Permission denied");
+                  return EXIT_FAILURE
+                },
                 Err(errno) => {
                   println!("{arg0}: unexpected error: {errno:?}");
                   EXIT_FAILURE
@@ -518,6 +544,10 @@ pub fn rm(args: Args, kernel: &mut Kernel) -> AddressSize {
           println!("{arg0}: cannot remove '{pathname}': No such file or directory");
           return EXIT_ENOENT;
         },
+        Err(Errno::EACCES(_)) => {
+          println!("{arg0}: '{pathname}': Permission denied");
+          return EXIT_FAILURE
+        },
         Err(errno) => {
           println!("{arg0}: unexpected error: {errno:?}");
           return EXIT_FAILURE;
@@ -528,6 +558,10 @@ pub fn rm(args: Args, kernel: &mut Kernel) -> AddressSize {
       if vinode.mode.file_type() != FileModeType::Dir as u8 {
         return match kernel.vfs.remove_file(&pathname) {
           Ok(()) => EXIT_SUCCESS,
+          Err(Errno::EACCES(_)) => {
+            println!("{arg0}: '{pathname}': Permission denied");
+            return EXIT_FAILURE
+          },
           Err(errno) => {
             println!("{arg0}: unexpected error: {errno:?}");
             EXIT_FAILURE
@@ -559,6 +593,10 @@ pub fn rm(args: Args, kernel: &mut Kernel) -> AddressSize {
           }
           return match kernel.vfs.remove_file(&pathname) {
             Ok(()) => EXIT_SUCCESS,
+            Err(Errno::EACCES(_)) => {
+              println!("{arg0}: '{pathname}': Permission denied");
+              return EXIT_FAILURE
+            },
             Err(errno) => {
               println!("{arg0}: unexpected error: {errno:?}");
               EXIT_FAILURE
@@ -616,6 +654,10 @@ pub fn cp(args: Args, kernel: &mut Kernel) -> AddressSize {
         Err(Errno::ENOENT(_)) => {
           println!("{arg0}: {source_pathname}: No such file or directory");
           return EXIT_ENOENT;
+        },
+        Err(Errno::EACCES(_)) => {
+          println!("{arg0}: {source_pathname}: Permission denied");
+          return EXIT_FAILURE
         },
         Err(errno) => {
           println!("{arg0}: unexpected error: {errno:?}");
@@ -687,6 +729,10 @@ pub fn write(args: Args, kernel: &mut Kernel) -> AddressSize {
           println!("{arg0}: {pathname}: Is a directory");
           return EXIT_FAILURE;
         },
+        Err(Errno::EACCES(_)) => {
+          println!("{arg0}: '{pathname}': Permission denied");
+          return EXIT_FAILURE
+        },
         Err(errno) => {
           println!("{arg0}: unexpected error: {errno:?}");
           return EXIT_FAILURE;
@@ -719,6 +765,10 @@ pub fn ed(args: Args, kernel: &mut Kernel) -> AddressSize {
         Err(Errno::EISDIR(_)) => {
           println!("{arg0}: {pathname}: Is a directory");
           return EXIT_FAILURE;
+        },
+        Err(Errno::EACCES(_)) => {
+          println!("{arg0}: '{pathname}': Permission denied");
+          return EXIT_FAILURE
         },
         Err(errno) => {
           println!("{arg0}: unexpected error: {errno:?}");
@@ -767,6 +817,10 @@ pub fn ed(args: Args, kernel: &mut Kernel) -> AddressSize {
       // Write file back
       return match kernel.vfs.write_file(&pathname, &edited_bytes) {
         Ok(_) => EXIT_SUCCESS,
+        Err(Errno::EACCES(_)) => {
+          println!("{arg0}: '{pathname}': Permission denied");
+          return EXIT_FAILURE
+        },
         Err(errno) => {
           println!("{arg0}: unexpected error: {errno:?}");
           EXIT_FAILURE
@@ -796,6 +850,10 @@ pub fn chmod(args: Args, kernel: &mut Kernel) -> AddressSize {
           println!("{arg0}: {pathname}: No such file or directory");
           return EXIT_ENOENT;
         },
+        Err(Errno::EACCES(_)) => {
+          println!("{arg0}: '{pathname}': Permission denied");
+          return EXIT_FAILURE
+        },
         Err(errno) => {
           println!("{arg0}: unexpected error: {errno:?}");
           return EXIT_FAILURE;
@@ -822,6 +880,14 @@ pub fn chmod(args: Args, kernel: &mut Kernel) -> AddressSize {
 
       match kernel.vfs.change_mode(&pathname, new_mode) {
         Ok(_) => EXIT_SUCCESS,
+        Err(Errno::EPERM(_)) => {
+          println!("{arg0}: {pathname}: Operation not permitted");
+          return EXIT_FAILURE
+        },
+        Err(Errno::EACCES(_)) => {
+          println!("{arg0}: '{pathname}': Permission denied");
+          return EXIT_FAILURE
+        },
         Err(errno) => {
           println!("{arg0}: unexpected error: {errno:?}");
           return EXIT_FAILURE;
@@ -851,6 +917,14 @@ pub fn chown(args: Args, kernel: &mut Kernel) -> AddressSize {
         ..
       } = match kernel.vfs.lookup_path(&pathname) {
         Ok(vinode) => vinode,
+        Err(Errno::EPERM(_)) => {
+          println!("{arg0}: changing owner of '{pathname}': Operation not permitted");
+          return EXIT_FAILURE
+        },
+        Err(Errno::EACCES(_)) => {
+          println!("{arg0}: '{pathname}': Permission denied");
+          return EXIT_FAILURE
+        },
         Err(Errno::ENOENT(_)) => {
           println!("{arg0}: {pathname}: No such file or directory");
           return EXIT_ENOENT;
@@ -899,6 +973,14 @@ pub fn chown(args: Args, kernel: &mut Kernel) -> AddressSize {
 
       match kernel.vfs.change_owners(&pathname, uid, gid) {
         Ok(_) => EXIT_SUCCESS,
+        Err(Errno::EPERM(_)) => {
+          println!("{arg0}: changing owner of '{pathname}': Operation not permitted");
+          return EXIT_FAILURE
+        },
+        Err(Errno::EACCES(_)) => {
+          println!("{arg0}: '{pathname}': Permission denied");
+          return EXIT_FAILURE
+        },
         Err(errno) => {
           println!("{arg0}: unexpected error: {errno:?}");
           EXIT_FAILURE
@@ -933,6 +1015,16 @@ pub fn lsblk(args: Args, kernel: &mut Kernel) -> AddressSize {
   let mount_points = &kernel.vfs.mount_points;
   println!("{device_table:#?}");
   println!("mount_points: {mount_points:#?}");
+  EXIT_SUCCESS
+}
+
+pub fn passwdup(args: Args, kernel: &mut Kernel) -> AddressSize {
+  let arg0 = args.get(0).unwrap().clone();
+  if let Err(errno) = kernel.update_uid_map() {
+    println!("{arg0}: cannot update '{PASSWD_PATH}': {errno:?}");
+    return EXIT_FAILURE;
+  }
+
   EXIT_SUCCESS
 }
 
@@ -983,6 +1075,10 @@ pub fn mount(args: Args, kernel: &mut Kernel) -> AddressSize {
       target,
     }) => match kernel.mount(&source, &target, filesystem_type) {
       Ok(_) => 0,
+      Err(Errno::EPERM(_)) => {
+        println!("{arg0}: unable to mount: Operation not permitted");
+        return EXIT_FAILURE
+      },
       Err(Errno::EINVAL(message)) => {
         println!("{arg0}: error: {message}");
         1
@@ -1049,7 +1145,7 @@ pub fn whoami(args: Args, kernel: &mut Kernel) -> AddressSize {
     }
     Ok(BinArgs {}) => {
       let user_name = kernel
-        .gid_map
+        .uid_map
         .get(&kernel.current_uid)
         .unwrap_or(&format!("<no name>({})", kernel.current_uid))
         .clone();
@@ -1080,7 +1176,26 @@ pub fn su(args: Args, kernel: &mut Kernel) -> AddressSize {
         .find(|(_, name)| user == **name)
         .map(|(id, _)| *id)
       {
+        let bytes = match kernel.vfs.read_file("/etc/passwd", AddressSize::MAX) {
+          Ok(bytes) => bytes,
+          Err(Errno::EACCES(_)) => {
+            println!("{arg0}: Permission denied");
+            return EXIT_FAILURE
+          },
+          Err(errno) => {
+            println!("{arg0}: unexpected error: {errno:?}");
+            return EXIT_FAILURE
+          },
+        };
+        kernel.current_gid = match Passwd::parse_passwds(&String::from_utf8(bytes).unwrap()).into_iter().find(|p| p.name == user).map(|p| p.gid) {
+          Some(gid) => gid,
+          None => {
+            println!("{arg0}: user '{user}' does not exist in /etc/passwd");
+            return EXIT_FAILURE;
+          },
+        };
         kernel.current_uid = uid;
+        kernel.update_vfs_current_uid();
         EXIT_SUCCESS
       } else {
         println!("{arg0}: user '{user}' does not exist; you might want to reread /etc/passwd");
@@ -1172,91 +1287,23 @@ pub fn useradd(args: Args, kernel: &mut Kernel) -> AddressSize {
       let serialized = Passwd::serialize_passwds(&passwds);
       
       match kernel.vfs.write_file("/etc/passwd", serialized.as_bytes()) {
-        Ok(_) => EXIT_SUCCESS,
+        Ok(_) => (),
         Err(Errno::EACCES(_)) => {
           println!("{arg0}: Permission denied");
-          EXIT_FAILURE
+          return EXIT_FAILURE
         },
         Err(errno) => {
           println!("{arg0}: unexpected error: {errno:?}");
           return EXIT_FAILURE
         },
+      };
+
+      if let Err(errno) = kernel.update_uid_map() {
+        println!("{arg0}: cannot update '{PASSWD_PATH}': {errno:?}");
       }
+
+      EXIT_SUCCESS
     },
-  }
-}
-
-struct Passwd {
-  name: String,
-  password: String,
-  uid: Id,
-  gid: Id,
-  comment: String,
-  home: String,
-  shell: String,
-}
-
-enum ParseError {
-  BadLine,
-  InvalidUid,
-  InvalidGid,
-}
-
-impl Passwd {
-  /// Parse `name:password:uid:gid:comment:home:shell`
-  /// lines - invalid ones omitted
-  fn parse_passwds(string: &str) -> Vec<Passwd> {
-    string
-      .lines()
-      .flat_map(|line| {
-        if !Regex::new("^.*:.*:.*:.*:.*:.*:.*$").unwrap().is_match(line).unwrap() {
-          return Err(ParseError::BadLine);
-        }
-
-        let mut split = line.split(":");
-
-        let name = split.next().unwrap_or("").to_owned();
-        let password = split.next().unwrap_or("").to_owned();
-        let uid = match split.next().map(str::parse::<Id>).ok_or(ParseError::InvalidUid)? {
-            Ok(uid) => uid,
-            Err(_) => {
-              return Err(ParseError::InvalidUid);
-            },
-        };
-        let gid = match split.next().map(str::parse::<Id>).ok_or(ParseError::InvalidGid)? {
-          Ok(gid) => gid,
-          Err(_) => {
-            return Err(ParseError::InvalidGid);
-          },
-        };
-        let comment = split.next().unwrap_or("").to_owned();
-        let home = split.next().unwrap_or("").to_owned();
-        let shell = split.next().unwrap_or("").to_owned();
-
-        Ok(Passwd {
-          name,
-          password,
-          uid,
-          gid,
-          comment,
-          home,
-          shell,
-        })
-      })
-      .collect()
-  }
-
-  fn to_string(&self) -> String {
-    let Passwd { name, password, uid, gid, comment, home, shell } = self;
-
-    format!("{name}:{password}:{uid}:{gid}:{comment}:{home}:{shell}")
-  }
-
-  fn serialize_passwds(passwds: &[Passwd]) -> String {
-    passwds
-      .into_iter()
-      .map(Self::to_string)
-      .join("\n")
   }
 }
 
@@ -1319,16 +1366,22 @@ pub fn userdel(args: Args, kernel: &mut Kernel) -> AddressSize {
       let serialized = Passwd::serialize_passwds(&passwds);
 
       match kernel.vfs.write_file("/etc/passwd", serialized.as_bytes()) {
-        Ok(_) => EXIT_SUCCESS,
+        Ok(_) => (),
         Err(Errno::EACCES(_)) => {
           println!("{arg0}: Permission denied");
-          EXIT_FAILURE
+          return EXIT_FAILURE
         },
         Err(errno) => {
           println!("{arg0}: unexpected error: {errno:?}");
           return EXIT_FAILURE
         },
       }
+
+      if let Err(errno) = kernel.update_uid_map() {
+        println!("{arg0}: cannot update '{PASSWD_PATH}': {errno:?}");
+      }
+
+      EXIT_SUCCESS
     },
   }
 }

@@ -185,7 +185,7 @@ impl Filesystem for DeviceFilesystem {
     Err(Errno::EPERM(String::from("devfs write_bytes: permission denied")))
   }
 
-  fn read_dir(&self, pathname: &str) -> Result<VDirectory, Errno> {
+  fn read_dir(&mut self, pathname: &str) -> Result<VDirectory, Errno> {
     // TODO: FIXME: remove /. when .. and . is implemented 
     if pathname != "/" && pathname != "/." && pathname != "/.." { // OLD
     // if pathname != "/" {
@@ -206,7 +206,7 @@ impl Filesystem for DeviceFilesystem {
     )
   }
 
-  fn stat(&self, pathname: &str)
+  fn stat(&mut self, pathname: &str)
     -> Result<super::fs::FileStat, Errno> {
     let VINode {
       mode,
@@ -255,7 +255,7 @@ impl Filesystem for DeviceFilesystem {
 // Поиск файла в файловой системе. Возвращает INode файла.
   // Для VFS сначала матчинг на маунт-поинты и вызов lookup_path("/mount/point") у конкретной файловой системы;
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
-  fn lookup_path(&self, pathname: &str) -> Result<VINode, Errno> {
+  fn lookup_path(&mut self, pathname: &str) -> Result<VINode, Errno> {
     let (_, final_component) = VFS::split_path(pathname)?;
     let dir = self.read_dir("/")?; // TODO: FIXME: magic string
 

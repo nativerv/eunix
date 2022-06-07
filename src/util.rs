@@ -1,5 +1,5 @@
 use super::*;
-use std::process::Command;
+use std::{process::Command, ops::BitAnd};
 
 pub fn mkenxvd(size: String, file_path: String) {
   let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/mkenxvd.sh");
@@ -60,5 +60,15 @@ pub fn get_bit_at(input: u8, n: u8) -> bool {
     false
   }
 }
+
+// pub trait BitMask: BitAnd + Sized + Copy + PartialEq {
+//   fn get_bit_at(&self, n: u8) -> bool {
+//     if n < 8 {
+//       *self & (1 << n) != 0
+//     } else {
+//       false
+//     }
+//   }
+// }
 
 // vim:ts=2 sw=2

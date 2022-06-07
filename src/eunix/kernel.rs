@@ -1,3 +1,4 @@
+use crate::binaries::PASSWD_PATH;
 use crate::eunix::devfs::DeviceFilesystem;
 use crate::eunix::binfs::BinFilesytem;
 use crate::eunix::fs::{FileDescription, FileDescriptor, VFS, OpenMode, MountedFilesystem, OpenFlags};
@@ -6,6 +7,7 @@ use crate::machine::{MachineDeviceTable, VirtualDeviceType};
 use std::collections::BTreeMap;
 
 use super::fs::{AddressSize, Filesystem, FilesystemType, VDirectory, Id, VINode, FileStat, NOBODY_UID, NOBODY_GID};
+use super::users::Passwd;
 use super::virtfs::{VirtFsFilesystem, Payload};
 
 pub type Args = Vec<String>;
@@ -21,7 +23,7 @@ pub struct Times {
   pub btime: UnixtimeSize,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Errno {
   /// Permission denied
   EACCES(String),
@@ -148,6 +150,7 @@ impl Kernel {
       vfs: VFS {
         mount_points: BTreeMap::new(),
         open_files: BTreeMap::new(),
+        current_uid: ROOT_UID,
       },
       processes: BTreeMap::new(),
       current_process_id: 0,
@@ -173,6 +176,10 @@ impl Kernel {
       
     let init_proc = kernel.spawn_process(init.as_str());
 
+    if let Err(errno) = kernel.update_uid_map() {
+      println!("[{KERNEL_MESSAGE_HEADER_ERR}]: cannot update '{PASSWD_PATH}': {errno:?}");
+    }
+
     // kernel.exec(init.as_str(), Vec::new());
 
     kernel
@@ -192,6 +199,23 @@ impl Kernel {
 
   fn allocate_pid(&self) -> AddressSize {
     self.current_process_id() + 1
+  }
+
+  pub fn update_uid_map(&mut self) -> Result<(), Errno> {
+    let bytes = self.vfs.read_file(PASSWD_PATH, AddressSize::MAX)?;
+    let contents = String::from_utf8(bytes)
+      .or(Err(Errno::EILSEQ(format!("kernel::update_passwd: invalid bytes in {PASSWD_PATH}"))))?;
+    let passwds = Passwd::parse_passwds(&contents);
+
+    for passwd in passwds {
+      self.uid_map.insert(passwd.uid, passwd.name);
+    }
+
+    Ok(())
+  }
+
+  pub fn update_vfs_current_uid(&mut self) {
+    self.vfs.current_uid = self.current_uid;
   }
 
   fn open_stdio_files(&mut self, process: &mut Process) -> Result<(), Errno> {

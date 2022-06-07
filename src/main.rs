@@ -75,6 +75,7 @@ pub fn main() {
     (String::from("/uname"),        binaries::uname),     // [x]
     (String::from("/mount"),        binaries::mount),     // [x]
     (String::from("/lsblk"),        binaries::lsblk),     // [x]
+    (String::from("/passwdup"),     binaries::passwdup),  // [x]
     (String::from("/id"),           binaries::id),        // [x]
     (String::from("/whoami"),       binaries::whoami),    // [x]
     (String::from("/su"),           binaries::su),        // [x]

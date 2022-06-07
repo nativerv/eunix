@@ -371,7 +371,7 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
       todo!("Accept callbacks for read and write from the instantiator")
   }
 
-  fn read_dir(&self, pathname: &str)
+  fn read_dir(&mut self, pathname: &str)
     -> Result<VDirectory, Errno> {
     let inode_number = self.lookup_path(pathname)?.number;
     let dir = self.read_dir_from_inode(inode_number)?;
@@ -379,7 +379,7 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
     Ok(dir.into())
   }
 
-  fn stat(&self, pathname: &str) 
+  fn stat(&mut self, pathname: &str) 
     -> Result<FileStat, Errno> {
     let inode_number = self.lookup_path(pathname)?.number;
     let INode {
@@ -429,7 +429,7 @@ impl<T: VirtFsFile> Filesystem for VirtFsFilesystem<T> {
   // Поиск файла в файловой системе. Возвращает INode фала.
   // Для VFS сначала матчинг на маунт-поинты и вызов lookup_path("/mount/point") у конкретной файловой системы;
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
-  fn lookup_path(&self, pathname: &str)
+  fn lookup_path(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
     let pathname = VFS::split_path(pathname)?;
     let (everything_else, final_component) = pathname.clone();

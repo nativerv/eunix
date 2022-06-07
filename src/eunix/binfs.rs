@@ -115,12 +115,12 @@ impl Filesystem for BinFilesytem {
     self.virtfs.write_file(pathname, data)
   }
 
-  fn read_dir(&self, pathname: &str)
+  fn read_dir(&mut self, pathname: &str)
     -> Result<super::fs::VDirectory, super::kernel::Errno> {
     self.virtfs.read_dir(pathname)
   }
 
-  fn stat(&self, pathname: &str)
+  fn stat(&mut self, pathname: &str)
     -> Result<super::fs::FileStat, super::kernel::Errno> {
     self.virtfs.stat(pathname)
   }
@@ -140,7 +140,7 @@ impl Filesystem for BinFilesytem {
     todo!()
   }
 
-  fn lookup_path(&self, pathname: &str)
+  fn lookup_path(&mut self, pathname: &str)
     -> Result<super::fs::VINode, super::kernel::Errno> {
     self.virtfs.lookup_path(pathname)
   }

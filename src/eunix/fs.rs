@@ -3,9 +3,9 @@ use core::fmt::{Debug, self};
 use fancy_regex::Regex;
 use itertools::Itertools;
 
-use crate::util::{fixedpoint, unixtime};
+use crate::{util::{fixedpoint, unixtime, self}, binaries::PASSWD_PATH};
 
-use super::kernel::{Errno, UnixtimeSize, Times, KERNEL_MESSAGE_HEADER_ERR};
+use super::{kernel::{Errno, UnixtimeSize, Times, KERNEL_MESSAGE_HEADER_ERR, ROOT_UID, ROOT_GID}, users::Passwd};
 
 pub type AddressSize = u32;
 pub type Id = u16;
@@ -27,6 +27,10 @@ enum Devtype {
   Block = 0b011,
   Char  = 0b100,
 }
+
+pub const PERM_R: u8 = 0b100;
+pub const PERM_W: u8 = 0b010;
+pub const PERM_X: u8 = 0b001;
 
 //    free?
 ///   | unused
@@ -372,10 +376,10 @@ pub trait Filesystem {
   fn write_file(&mut self, pathname: &str, data: &[u8])
     -> Result<VINode, Errno>;
 
-  fn read_dir(&self, pathname: &str)
+  fn read_dir(&mut self, pathname: &str)
     -> Result<VDirectory, Errno>;
 
-  fn stat(&self, pathname: &str)
+  fn stat(&mut self, pathname: &str)
     -> Result<FileStat, Errno>;
 
   fn change_mode(&mut self, pathname: &str, mode: FileMode)
@@ -390,7 +394,7 @@ pub trait Filesystem {
   // Поиск файла в файловой системе. Возвращает INode фала.
   // Для VFS сначала матчинг на маунт-поинты и вызов lookup_path("/mount/point") у конкретной файловой системы;
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
-  fn lookup_path(&self, pathname: &str)
+  fn lookup_path(&mut self, pathname: &str)
     -> Result<VINode, Errno>;
 
   fn name(&self) -> String;
@@ -406,13 +410,22 @@ impl Debug for dyn Filesystem {
 impl Filesystem for VFS {
   fn create_file(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
+    let parent_vinode = self.lookup_path(&VFS::parent_dir(pathname)?)?;
+    self.permission_check(parent_vinode, PERM_W)?;
+
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::create_file: we know that mount_point exist");  
+
     mounted_fs.driver.create_file(&internal_pathname)
   }
 
   fn remove_file(&mut self, pathname: &str)
     -> Result<(), Errno> {
+    let parent_vinode = self.lookup_path(&VFS::parent_dir(pathname)?)?;
+    let vinode = self.lookup_path(&VFS::parent_dir(pathname)?)?;
+    self.permission_check(parent_vinode, PERM_W)?;
+    self.permission_check(vinode, PERM_W)?;
+
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::remove_file: we know that mount_point exist");  
     mounted_fs.driver.remove_file(&internal_pathname)
@@ -420,6 +433,9 @@ impl Filesystem for VFS {
 
   fn create_dir(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
+    let parent_vinode = self.lookup_path(&VFS::parent_dir(pathname)?)?;
+    self.permission_check(parent_vinode, PERM_W)?;
+
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::create_dir: we know that mount_point exist");  
     mounted_fs.driver.create_dir(&internal_pathname)
@@ -427,6 +443,9 @@ impl Filesystem for VFS {
 
   fn read_file(&mut self, pathname: &str, _count: AddressSize)
     -> Result<Vec<u8>, Errno> {
+    let vinode = self.lookup_path(pathname)?;
+    self.permission_check(vinode, PERM_R)?;
+
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::read_file: we know that mount_point exist");  
     mounted_fs.driver.read_file(&internal_pathname, EVERYTHING)
@@ -434,15 +453,21 @@ impl Filesystem for VFS {
 
   fn write_file(&mut self, pathname: &str, data: &[u8])
     -> Result<VINode, Errno> {
+    let vinode = self.lookup_path(pathname)?;
+    self.permission_check(vinode, PERM_W)?;
+
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::write_file: we know that mount_point exist");  
     mounted_fs.driver.write_file(&internal_pathname, data)
   }
 
-  fn read_dir(&self, pathname: &str)
+  fn read_dir(&mut self, pathname: &str)
     -> Result<VDirectory, Errno> {
+    // let vinode = self.lookup_path(&VFS::parent_dir(pathname)?)?;
+    // self.permission_check(vinode, PERM_W)?;
+
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
-    let mounted_fs = self.mount_points.get(&mount_point).expect("VFS::read_dir: we know that mount_point exist");  
+    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::read_dir: we know that mount_point exist");  
 
     // Guard for Not a directory
     match mounted_fs.driver.stat(&internal_pathname)? {
@@ -454,15 +479,29 @@ impl Filesystem for VFS {
     mounted_fs.driver.read_dir(&internal_pathname)
   }
 
-  fn stat(&self, pathname: &str)
+  fn stat(&mut self, pathname: &str)
     -> Result<FileStat, Errno> {
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
-    let mounted_fs = self.mount_points.get(&mount_point).expect("VFS::stat: we know that mount_point exist");  
+    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::stat: we know that mount_point exist");  
     mounted_fs.driver.stat(&internal_pathname)
   }
 
   fn change_mode(&mut self, pathname: &str, mode: FileMode)
     -> Result<(), Errno> {
+    let vinode = self.lookup_path(pathname)?;
+    let bytes = self.read_file("/etc/passwd", AddressSize::MAX)?;
+    let contents = String::from_utf8(bytes)
+      .or(Err(Errno::EILSEQ(format!("fs::change_mode: can't parse utf8"))))?;
+    let passwd = Passwd::parse_passwds(&contents)
+      .into_iter()
+      .find(|passwd| passwd.uid == self.current_uid)
+      .ok_or(Errno::EACCES(format!("fs::change_mode: no such uid in /etc/passwd")))?;
+
+    // Guard for ownership
+    if !(vinode.uid == self.current_uid || vinode.gid == passwd.gid) {
+      return Err(Errno::EPERM(format!("fs::change_mode: operation not permitted")))
+    }
+
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::change_mode: we know that mount_point exist");  
     mounted_fs.driver.change_mode(&internal_pathname, mode)
@@ -470,6 +509,13 @@ impl Filesystem for VFS {
 
   fn change_owners(&mut self, pathname: &str, uid: Id, gid: Id) 
     -> Result<(), Errno> {
+    let vinode = self.lookup_path(pathname)?;
+
+    // Guard - only root can change ownership
+    if self.current_uid != ROOT_UID {
+      return Err(Errno::EPERM(format!("fs::change_owners: operation not permitted")))
+    }
+
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::change_owners: we know that mount_point exist");  
     mounted_fs.driver.change_owners(&internal_pathname, uid, gid)
@@ -477,6 +523,9 @@ impl Filesystem for VFS {
 
   fn change_times(&mut self, pathname: &str, times: Times)
     -> Result<(), Errno> {
+    let vinode = self.lookup_path(pathname)?;
+    self.permission_check(vinode, PERM_W)?;
+
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::change_mode: we know that mount_point exist");  
     mounted_fs.driver.change_times(&internal_pathname, times)
@@ -485,18 +534,18 @@ impl Filesystem for VFS {
   // Поиск файла в файловой системе. Возвращает INode фала.
   // Для VFS сначала матчит на маунт-поинты и вызывает lookup_path("/internal/path") у конкретной файловой системы;
   // Для конкретных реализаций (e5fs) поиск сразу от рута файловой системы
-  fn lookup_path(&self, pathname: &str)
+  fn lookup_path(&mut self, pathname: &str)
     -> Result<VINode, Errno> {
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
-    let mounted_fs = self.mount_points.get(&mount_point).expect("VFS::lookup_path: we know that mount_point exist");  
+    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::lookup_path: we know that mount_point exist");  
     mounted_fs.driver.lookup_path(&internal_pathname)
   }
 
-fn name(&self) -> String {
+  fn name(&self) -> String {
     String::from("vfs")
   }
 
-fn as_any(&mut self) -> &mut dyn Any {
+  fn as_any(&mut self) -> &mut dyn Any {
     self
   }
 }
@@ -522,6 +571,7 @@ impl FileDescription {
 pub struct VFS {
   pub mount_points: BTreeMap<String, MountedFilesystem>,
   pub open_files: BTreeMap<String, FileDescription>,
+  pub current_uid: Id,
 }
 
 #[derive(Debug)]
@@ -676,6 +726,76 @@ impl VFS {
       1 => Ok((Vec::new(), final_component)),
       _ => Ok((everything_else, final_component)),
     }
+  }
+
+  fn permission_check(&mut self, vinode: VINode, wanted_perm_mask: u8) 
+    -> Result<(), Errno> {
+    let (mount_point, _) = self.match_mount_point(PASSWD_PATH)?;
+    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::read_file: we know that mount_point exist");  
+    let bytes = mounted_fs.driver.read_file(PASSWD_PATH, EVERYTHING)?;
+
+    let contents = String::from_utf8(bytes)
+      .or(Err(Errno::EILSEQ(format!("fs::permission_check: can't parse utf8"))))?;
+    let passwd = Passwd::parse_passwds(&contents)
+      .into_iter()
+      .chain(std::iter::once(Passwd { 
+        name: String::from("root"), 
+        password: String::from(""), 
+        uid: ROOT_UID, 
+        gid: ROOT_GID, 
+        comment: String::from(""), 
+        home: String::from(""), 
+        shell: String::from("") 
+      }))
+      .find(|passwd| passwd.uid == self.current_uid)
+      .ok_or(Errno::EACCES(format!("fs::permission_check: no such uid in /etc/passwd")))?;
+
+    let others_read = util::get_bit_at(vinode.mode.others(), 2);
+    let others_write = util::get_bit_at(vinode.mode.others(), 1);
+    let others_execute = util::get_bit_at(vinode.mode.others(), 0);
+    let group_read = util::get_bit_at(vinode.mode.group(), 2) && passwd.gid == vinode.gid;
+    let group_write = util::get_bit_at(vinode.mode.group(), 1) && passwd.gid == vinode.gid;
+    let group_execute = util::get_bit_at(vinode.mode.group(), 0) && passwd.gid == vinode.gid;
+    let user_read = util::get_bit_at(vinode.mode.user(), 2) && passwd.uid == vinode.uid;
+    let user_write = util::get_bit_at(vinode.mode.user(), 1) && passwd.uid == vinode.uid;
+    let user_execute = util::get_bit_at(vinode.mode.user(), 0) && passwd.uid == vinode.uid;
+
+    println!("passwd.uid: {}", passwd.uid);
+    
+    // println!("[] vinode: {vinode:#?}");
+    // println!("[] others_read: {others_read}");
+    // println!("[] others_write: {others_write}");
+    // println!("[] others_execute: {others_execute}");
+    // println!("[]");
+    // println!("[] group_read: {group_read}");
+    // println!("[] group_write: {group_write}");
+    // println!("[] group_execute: {group_execute}");
+    // println!("[]");
+    // println!("[] user_read: {user_read}");
+    // println!("[] user_write: {user_write}");
+    // println!("[] user_execute: {user_execute}");
+
+    let wanted_read = util::get_bit_at(wanted_perm_mask, 2);
+    let wanted_write = util::get_bit_at(wanted_perm_mask, 1);
+    let wanted_execute = util::get_bit_at(wanted_perm_mask, 0);
+    let is_read_matches = ((user_read || group_read || others_read) == wanted_read) || !wanted_read;
+    let is_write_matches = ((user_write || group_write || others_write) == wanted_write) || !wanted_write;
+    let is_execute_matches = ((user_execute || group_execute || others_execute) == wanted_execute) || !wanted_execute;
+    let is_permission_matches = is_read_matches && is_write_matches && is_execute_matches;
+
+    // println!("[]");
+    // println!("[] wanted read: {}", util::get_bit_at(wanted_perm_mask, 2));
+    // println!("[] wanted write: {}", util::get_bit_at(wanted_perm_mask, 1));
+    // println!("[] wanted execute: {}", util::get_bit_at(wanted_perm_mask, 0));
+    // println!("[]");
+    // println!("[] current uid: {}", passwd.uid);
+    // println!("[] current gid: {}", passwd.gid);
+    // println!("[]");
+    // println!("[] granted: {is_permission_granted}");
+
+    let perm_denied_errno = Errno::EACCES(format!("fs::permission_check: permission denied"));
+
+    is_permission_matches.then_some(()).ok_or(perm_denied_errno)
   }
 }
 

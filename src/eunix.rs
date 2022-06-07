@@ -4,3 +4,4 @@ pub mod e5fs;
 pub mod devfs;
 pub mod binfs;
 pub mod virtfs;
+pub mod users;
