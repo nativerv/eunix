@@ -151,6 +151,7 @@ impl Kernel {
         mount_points: BTreeMap::new(),
         open_files: BTreeMap::new(),
         current_uid: ROOT_UID,
+        current_gid: ROOT_GID,
       },
       processes: BTreeMap::new(),
       current_process_id: 0,
@@ -211,8 +212,9 @@ impl Kernel {
     Ok(())
   }
 
-  pub fn update_vfs_current_uid(&mut self) {
+  pub fn update_vfs_current_uid_gid(&mut self) {
     self.vfs.current_uid = self.current_uid;
+    self.vfs.current_gid = self.current_gid;
   }
 
   fn open_stdio_files(&mut self, process: &mut Process) -> Result<(), Errno> {

@@ -416,7 +416,13 @@ impl Filesystem for VFS {
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::create_file: we know that mount_point exist");  
 
-    mounted_fs.driver.create_file(&internal_pathname)
+    mounted_fs.driver.create_file(&internal_pathname)?;
+    self.change_owners(&pathname, self.current_uid, self.current_gid)?;
+
+    // Bruh...
+    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::create_file: we know that mount_point exist");  
+
+    mounted_fs.driver.lookup_path(&internal_pathname)
   }
 
   fn remove_file(&mut self, pathname: &str)
@@ -435,10 +441,19 @@ impl Filesystem for VFS {
     -> Result<VINode, Errno> {
     let parent_vinode = self.lookup_path(&VFS::parent_dir(pathname)?)?;
     self.permission_check(parent_vinode, PERM_W)?;
+    let vinode = self.lookup_path(pathname)?;
 
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::create_dir: we know that mount_point exist");  
-    mounted_fs.driver.create_dir(&internal_pathname)
+
+    mounted_fs.driver.create_dir(&internal_pathname)?;
+    self.change_owners(&pathname, self.current_uid, self.current_gid)?;
+    self.change_mode(&pathname, vinode.mode.with_user(0b111))?;
+
+    // Bruh...
+    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::create_dir: we know that mount_point exist");  
+
+    mounted_fs.driver.lookup_path(&internal_pathname)
   }
 
   fn read_file(&mut self, pathname: &str, _count: AddressSize)
@@ -498,7 +513,7 @@ impl Filesystem for VFS {
       .ok_or(Errno::EACCES(format!("fs::change_mode: no such uid in /etc/passwd")))?;
 
     // Guard for ownership
-    if !(vinode.uid == self.current_uid || vinode.gid == passwd.gid) {
+    if vinode.uid != self.current_uid && vinode.gid != passwd.gid && passwd.uid != ROOT_UID {
       return Err(Errno::EPERM(format!("fs::change_mode: operation not permitted")))
     }
 
@@ -572,6 +587,7 @@ pub struct VFS {
   pub mount_points: BTreeMap<String, MountedFilesystem>,
   pub open_files: BTreeMap<String, FileDescription>,
   pub current_uid: Id,
+  pub current_gid: Id,
 }
 
 #[derive(Debug)]
@@ -756,9 +772,9 @@ impl VFS {
     let group_read = util::get_bit_at(vinode.mode.group(), 2) && passwd.gid == vinode.gid;
     let group_write = util::get_bit_at(vinode.mode.group(), 1) && passwd.gid == vinode.gid;
     let group_execute = util::get_bit_at(vinode.mode.group(), 0) && passwd.gid == vinode.gid;
-    let user_read = util::get_bit_at(vinode.mode.user(), 2) && passwd.uid == vinode.uid;
-    let user_write = util::get_bit_at(vinode.mode.user(), 1) && passwd.uid == vinode.uid;
-    let user_execute = util::get_bit_at(vinode.mode.user(), 0) && passwd.uid == vinode.uid;
+    let user_read = util::get_bit_at(vinode.mode.user(), 2) && (passwd.uid == vinode.uid || passwd.uid == ROOT_UID);
+    let user_write = util::get_bit_at(vinode.mode.user(), 1) && (passwd.uid == vinode.uid || passwd.uid == ROOT_UID);
+    let user_execute = util::get_bit_at(vinode.mode.user(), 0) && (passwd.uid == vinode.uid || passwd.uid == ROOT_UID);
     
     // println!("[] vinode: {vinode:#?}");
     // println!("[] others_read: {others_read}");

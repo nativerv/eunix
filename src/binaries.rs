@@ -1228,7 +1228,7 @@ pub fn su(args: Args, kernel: &mut Kernel) -> AddressSize {
         }
         kernel.current_gid = gid;
         kernel.current_uid = uid;
-        kernel.update_vfs_current_uid();
+        kernel.update_vfs_current_uid_gid();
         EXIT_SUCCESS
       } else {
         println!("{arg0}: user '{user}' does not exist; you might want to reread /etc/passwd by typing 'passwd -u'");
@@ -1248,7 +1248,7 @@ pub fn useradd(args: Args, kernel: &mut Kernel) -> AddressSize {
     #[clap(short = 'c', long, default_value = "")]
     comment: String,
 
-    #[clap(short = 'm', long)]
+    #[clap(short = 'm', long, default_value = "")]
     home: String,
 
     #[clap(short = 'G', long, multiple_occurrences = true)]
@@ -1266,6 +1266,11 @@ pub fn useradd(args: Args, kernel: &mut Kernel) -> AddressSize {
       EXIT_FAILURE
     }
     Ok(BinArgs { name, primary_group, comment, home, supplementary_groups, shell }) => {
+      if kernel.current_uid != ROOT_UID {
+        println!("{arg0}: creating user: Operation not permitted");
+        return EXIT_FAILURE;
+      }
+
       let bytes = match kernel.vfs.read_file("/etc/passwd", AddressSize::MAX) {
         Ok(bytes) => bytes,
         Err(Errno::EACCES(_)) => {
@@ -1307,19 +1312,53 @@ pub fn useradd(args: Args, kernel: &mut Kernel) -> AddressSize {
 
       let password_hash = hex::encode(Sha256::digest(&password_one.as_bytes()));
 
+      let new_uid = unclaimed_uids.next().unwrap();
+      let new_gid = match kernel
+        .gid_map
+        .iter()
+        .find(|(_, name)| **name == primary_group)
+        .map(|(gid, _)| *gid)
+      {
+        Some(gid) => gid,
+        None => {
+          println!("{arg0}: group '{primary_group}' does not exist");
+          return EXIT_FAILURE
+        },
+      };
       passwds.push(Passwd {
         name: name.clone(),
         password: password_hash,
-        uid: unclaimed_uids.next().unwrap(),
-        gid: NOBODY_GID,
+        uid: new_uid,
+        gid: new_gid,
         comment,
-        home,
+        home: home.clone(),
         shell,
       });
 
       let serialized = Passwd::serialize_passwds(&passwds);
+
+      // Guard for home dir creation
+      if home != "" {
+        match kernel.vfs.create_dir(&home) {
+          Ok(_) => (),
+          Err(Errno::EEXIST(_)) => {
+            println!("{arg0}: creating home dir '{home}': Already exists");
+            return EXIT_FAILURE
+          },
+          Err(Errno::EACCES(_)) => {
+            println!("{arg0}: creating home dir '{home}': Permission denied");
+            return EXIT_FAILURE
+          },
+          Err(errno) => {
+            println!("{arg0}: unexpected error: {errno:?}");
+            return EXIT_FAILURE
+          },
+        };
+        kernel.vfs.change_owners(&home, new_uid, new_gid).unwrap();
+      }
       
-      match kernel.vfs.write_file("/etc/passwd", serialized.as_bytes()) {
+      // Write /etc/passwd
+      match kernel.vfs.write_file(PASSWD_PATH, serialized.as_bytes()) {
         Ok(_) => (),
         Err(Errno::EACCES(_)) => {
           println!("{arg0}: Permission denied");
@@ -1371,6 +1410,10 @@ pub fn userdel(args: Args, kernel: &mut Kernel) -> AddressSize {
       1
     }
     Ok(BinArgs { name }) => {
+      if kernel.current_uid != ROOT_UID {
+        println!("{arg0}: deleting user: Operation not permitted");
+        return EXIT_FAILURE;
+      }
       let bytes = match kernel.vfs.read_file("/etc/passwd", AddressSize::MAX) {
         Ok(bytes) => bytes,
         Err(Errno::EACCES(_)) => {
