@@ -176,10 +176,6 @@ impl Kernel {
       
     let init_proc = kernel.spawn_process(init.as_str());
 
-    if let Err(errno) = kernel.update_uid_map() {
-      println!("[{KERNEL_MESSAGE_HEADER_ERR}]: cannot update '{PASSWD_PATH}': {errno:?}");
-    }
-
     // kernel.exec(init.as_str(), Vec::new());
 
     kernel
@@ -201,7 +197,7 @@ impl Kernel {
     self.current_process_id() + 1
   }
 
-  pub fn update_uid_map(&mut self) -> Result<(), Errno> {
+  pub fn update_uid_gid_maps(&mut self) -> Result<(), Errno> {
     let bytes = self.vfs.read_file(PASSWD_PATH, AddressSize::MAX)?;
     let contents = String::from_utf8(bytes)
       .or(Err(Errno::EILSEQ(format!("kernel::update_passwd: invalid bytes in {PASSWD_PATH}"))))?;
@@ -209,6 +205,7 @@ impl Kernel {
 
     for passwd in passwds {
       self.uid_map.insert(passwd.uid, passwd.name);
+      // self.gid_map.insert(passwd.gid, passwd.name);
     }
 
     Ok(())

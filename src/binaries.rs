@@ -1018,14 +1018,28 @@ pub fn lsblk(args: Args, kernel: &mut Kernel) -> AddressSize {
   EXIT_SUCCESS
 }
 
-pub fn passwdup(args: Args, kernel: &mut Kernel) -> AddressSize {
+pub fn passwd(args: Args, kernel: &mut Kernel) -> AddressSize {
   let arg0 = args.get(0).unwrap().clone();
-  if let Err(errno) = kernel.update_uid_map() {
-    println!("{arg0}: cannot update '{PASSWD_PATH}': {errno:?}");
-    return EXIT_FAILURE;
+  #[derive(Debug, Parser)]
+  struct BinArgs {
+    #[clap(short, long, takes_value = false)]
+    update: bool,
   }
 
-  EXIT_SUCCESS
+  match BinArgs::try_parse_from(args.iter()) {
+    Err(message) => {
+      println!("{arg0}: invalid arguments: {message}");
+      1
+    }
+    Ok(BinArgs { update }) => {
+      if update && let Err(errno) = kernel.update_uid_gid_maps() {
+        println!("{arg0}: cannot update '{PASSWD_PATH}': {errno:?}");
+        return EXIT_FAILURE;
+      }
+
+      EXIT_SUCCESS
+    }
+  }
 }
 
 pub fn dumpe5fs(args: Args, kernel: &mut Kernel) -> AddressSize {
@@ -1187,18 +1201,37 @@ pub fn su(args: Args, kernel: &mut Kernel) -> AddressSize {
             return EXIT_FAILURE
           },
         };
-        kernel.current_gid = match Passwd::parse_passwds(&String::from_utf8(bytes).unwrap()).into_iter().find(|p| p.name == user).map(|p| p.gid) {
+        let Passwd { name, password, uid, gid, comment, home, shell } = match Passwd::parse_passwds(&String::from_utf8(bytes).unwrap())
+          .into_iter()
+          .find(|p| p.name == user)
+        {
           Some(gid) => gid,
           None => {
             println!("{arg0}: user '{user}' does not exist in /etc/passwd");
             return EXIT_FAILURE;
           },
         };
+
+        // Always switch to user if run as root
+        if kernel.current_uid != ROOT_UID {
+          let mut input_password = String::new();
+
+          // Read password from user
+          print!("Password: ");
+          stdout().flush().unwrap();
+          stdin().read_line(&mut input_password).unwrap();
+
+          if hex::encode(Sha256::digest(input_password)) != password {
+            println!("{arg0}: Authentication failure");
+            return EXIT_FAILURE;
+          }
+        }
+        kernel.current_gid = gid;
         kernel.current_uid = uid;
         kernel.update_vfs_current_uid();
         EXIT_SUCCESS
       } else {
-        println!("{arg0}: user '{user}' does not exist; you might want to reread /etc/passwd");
+        println!("{arg0}: user '{user}' does not exist; you might want to reread /etc/passwd by typing 'passwd -u'");
         EXIT_FAILURE
       }
     },
@@ -1298,7 +1331,7 @@ pub fn useradd(args: Args, kernel: &mut Kernel) -> AddressSize {
         },
       };
 
-      if let Err(errno) = kernel.update_uid_map() {
+      if let Err(errno) = kernel.update_uid_gid_maps() {
         println!("{arg0}: cannot update '{PASSWD_PATH}': {errno:?}");
       }
 
@@ -1377,7 +1410,7 @@ pub fn userdel(args: Args, kernel: &mut Kernel) -> AddressSize {
         },
       }
 
-      if let Err(errno) = kernel.update_uid_map() {
+      if let Err(errno) = kernel.update_uid_gid_maps() {
         println!("{arg0}: cannot update '{PASSWD_PATH}': {errno:?}");
       }
 

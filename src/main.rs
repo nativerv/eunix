@@ -1,6 +1,7 @@
 #![feature(type_alias_impl_trait)]
 #![feature(trait_alias)]
 #![feature(const_fmt_arguments_new)]
+#![feature(let_chains)]
 
 mod eunix;
 mod machine;
@@ -10,7 +11,7 @@ mod binaries;
 use fancy_regex::Regex;
 use machine::{Machine, OperatingSystem};
 use std::io::*;
-use crate::{eunix::{fs::{Filesystem, FileModeType}, kernel::{KERNEL_MESSAGE_HEADER_ERR, KernelParams, Errno}, binfs::BinFilesytem}, machine::VirtualDeviceType, binaries::EXIT_SUCCESS};
+use crate::{eunix::{fs::{Filesystem, FileModeType}, kernel::{KERNEL_MESSAGE_HEADER_ERR, KernelParams, Errno}, binfs::BinFilesytem}, machine::VirtualDeviceType, binaries::{EXIT_SUCCESS, PASSWD_PATH}};
 use std::path::Path;
 
 pub fn main() {
@@ -38,6 +39,10 @@ pub fn main() {
   os.kernel.mount("", "/dev", eunix::fs::FilesystemType::devfs).unwrap();
   os.kernel.mount("", "/bin", eunix::fs::FilesystemType::binfs).unwrap();
   os.kernel.mount("/dev/sda", "/", eunix::fs::FilesystemType::e5fs).unwrap();
+
+  if let Err(errno) = os.kernel.update_uid_gid_maps() {
+    println!("[{KERNEL_MESSAGE_HEADER_ERR}]: cannot update '{PASSWD_PATH}': {errno:?}");
+  }
 
   // let eunix_inode = os.kernel.vfs.create_file("/mnt").unwrap();
   // let mnt_inode = os.kernel.vfs.create_dir("/mnt").unwrap();
@@ -75,13 +80,13 @@ pub fn main() {
     (String::from("/uname"),        binaries::uname),     // [x]
     (String::from("/mount"),        binaries::mount),     // [x]
     (String::from("/lsblk"),        binaries::lsblk),     // [x]
-    (String::from("/passwdup"),     binaries::passwdup),  // [x]
+    (String::from("/passwd"),       binaries::passwd),    // [x]
     (String::from("/id"),           binaries::id),        // [x]
     (String::from("/whoami"),       binaries::whoami),    // [x]
     (String::from("/su"),           binaries::su),        // [x]
-    (String::from("/useradd"),      binaries::useradd),   // [ ]
+    (String::from("/useradd"),      binaries::useradd),   // [x]
     (String::from("/usermod"),      binaries::usermod),   // [ ]
-    (String::from("/userdel"),      binaries::userdel),   // [ ]
+    (String::from("/userdel"),      binaries::userdel),   // [x]
     (String::from("/groupmod"),     binaries::groupmod),  // [ ]
     (String::from("/groupdel"),     binaries::groupdel),  // [ ]
   ]).expect("we know that we have enough inodes and there is no dublicates");

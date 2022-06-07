@@ -759,8 +759,6 @@ impl VFS {
     let user_read = util::get_bit_at(vinode.mode.user(), 2) && passwd.uid == vinode.uid;
     let user_write = util::get_bit_at(vinode.mode.user(), 1) && passwd.uid == vinode.uid;
     let user_execute = util::get_bit_at(vinode.mode.user(), 0) && passwd.uid == vinode.uid;
-
-    println!("passwd.uid: {}", passwd.uid);
     
     // println!("[] vinode: {vinode:#?}");
     // println!("[] others_read: {others_read}");
