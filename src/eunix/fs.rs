@@ -422,9 +422,9 @@ impl Filesystem for VFS {
   fn remove_file(&mut self, pathname: &str)
     -> Result<(), Errno> {
     let parent_vinode = self.lookup_path(&VFS::parent_dir(pathname)?)?;
-    let vinode = self.lookup_path(&VFS::parent_dir(pathname)?)?;
+    // let vinode = self.lookup_path(&VFS::parent_dir(pathname)?)?;
     self.permission_check(parent_vinode, PERM_W)?;
-    self.permission_check(vinode, PERM_W)?;
+    // self.permission_check(vinode, PERM_W)?;
 
     let (mount_point, internal_pathname) = self.match_mount_point(pathname)?;
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::remove_file: we know that mount_point exist");  

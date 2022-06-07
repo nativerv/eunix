@@ -11,7 +11,7 @@ mod binaries;
 use fancy_regex::Regex;
 use machine::{Machine, OperatingSystem};
 use std::io::*;
-use crate::{eunix::{fs::{Filesystem, FileModeType}, kernel::{KERNEL_MESSAGE_HEADER_ERR, KernelParams, Errno}, binfs::BinFilesytem}, machine::VirtualDeviceType, binaries::{EXIT_SUCCESS, PASSWD_PATH}};
+use crate::{eunix::{fs::{Filesystem, FileModeType}, kernel::{KERNEL_MESSAGE_HEADER_ERR, KernelParams, Errno, ROOT_UID}, binfs::BinFilesytem}, machine::VirtualDeviceType, binaries::{EXIT_SUCCESS, PASSWD_PATH}};
 use std::path::Path;
 
 pub fn main() {
@@ -93,7 +93,7 @@ pub fn main() {
 
   // Shell vars
   let mut ifs = ' ';
-  let mut ps1 = String::from("(0) # ");
+  let mut ps1 = format!("({: >3}) # ", 0);
   let mut pwd = String::from("/");
   let mut path = String::from("/usr/bin:/bin");
 
@@ -182,11 +182,10 @@ pub fn main() {
         match os.kernel.exec(&pathname, args.as_ref()) {
           Ok(exit_code) => {
             // println!("[{KERNEL_MESSAGE_HEADER_ERR}]: program finished with exit code {exit_code}");
-            ps1 = if exit_code == EXIT_SUCCESS {
-              // format!("# ")
-              format!("({exit_code}) # ")
+            ps1 = if os.kernel.current_uid == ROOT_UID {
+              format!("({exit_code: >3}) # ")
             } else {
-              format!("({exit_code}) # ")
+              format!("({exit_code: >3}) $ ")
             }
           },
           Err(Errno::ENOENT(_)) => {

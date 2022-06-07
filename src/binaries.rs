@@ -554,7 +554,7 @@ pub fn rm(args: Args, kernel: &mut Kernel) -> AddressSize {
         },
       };
 
-      // Just a file case
+      // File case
       if vinode.mode.file_type() != FileModeType::Dir as u8 {
         return match kernel.vfs.remove_file(&pathname) {
           Ok(()) => EXIT_SUCCESS,
