@@ -417,11 +417,7 @@ impl Filesystem for VFS {
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::create_file: we know that mount_point exist");  
 
     mounted_fs.driver.create_file(&internal_pathname)?;
-    self.change_owners(&pathname, self.current_uid, self.current_gid)?;
-
-    // Bruh...
-    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::create_file: we know that mount_point exist");  
-
+    mounted_fs.driver.change_owners(&pathname, self.current_uid, self.current_gid)?;
     mounted_fs.driver.lookup_path(&internal_pathname)
   }
 
@@ -447,12 +443,8 @@ impl Filesystem for VFS {
     let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::create_dir: we know that mount_point exist");  
 
     mounted_fs.driver.create_dir(&internal_pathname)?;
-    self.change_owners(&pathname, self.current_uid, self.current_gid)?;
-    self.change_mode(&pathname, vinode.mode.with_user(0b111))?;
-
-    // Bruh...
-    let mounted_fs = self.mount_points.get_mut(&mount_point).expect("VFS::create_dir: we know that mount_point exist");  
-
+    mounted_fs.driver.change_mode(&pathname, vinode.mode.with_user(0b111))?;
+    mounted_fs.driver.change_owners(&pathname, self.current_uid, self.current_gid)?;
     mounted_fs.driver.lookup_path(&internal_pathname)
   }
 

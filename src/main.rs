@@ -12,7 +12,7 @@ use fancy_regex::Regex;
 use machine::{Machine, OperatingSystem};
 use sha2::{Sha256, Digest};
 use std::io::*;
-use crate::{eunix::{fs::{Filesystem, FileModeType, EVERYTHING, Id}, kernel::{KERNEL_MESSAGE_HEADER_ERR, KernelParams, Errno, ROOT_UID}, binfs::BinFilesytem, users::Passwd, e5fs::E5FSFilesystem}, machine::VirtualDeviceType, binaries::{EXIT_SUCCESS, PASSWD_PATH}};
+use crate::{eunix::{fs::{Filesystem, FileModeType, EVERYTHING, Id}, kernel::{KERNEL_MESSAGE_HEADER_ERR, KernelParams, Errno, ROOT_UID, ROOT_GID}, binfs::BinFilesytem, users::Passwd, e5fs::E5FSFilesystem}, machine::VirtualDeviceType, binaries::{EXIT_SUCCESS, PASSWD_PATH}};
 use std::path::Path;
 
 pub fn main() {
@@ -54,6 +54,11 @@ pub fn main() {
   //   .as_any()
   //   .downcast_mut::<E5FSFilesystem>()
   //   .unwrap();
+  // e5fs.change_owners("/proc", ROOT_UID, ROOT_GID).unwrap();
+  // e5fs.change_owners("/root", ROOT_UID, ROOT_GID).unwrap();
+  // e5fs.change_owners("/dev", ROOT_UID, ROOT_GID).unwrap();
+  // e5fs.change_owners("/sys", ROOT_UID, ROOT_GID).unwrap();
+  // e5fs.change_owners("/bin", ROOT_UID, ROOT_GID).unwrap();
   // e5fs.create_dir("/proc").unwrap();
   // e5fs.create_dir("/root").unwrap();
   // e5fs.create_dir("/dev").unwrap();
@@ -115,47 +120,53 @@ pub fn main() {
   let mut input_username = String::new();
   let mut input_password = String::new();
 
+  // print!("{}[2J", 27 as char);
+  std::process::Command::new("clear").status().unwrap();
   println!("Eunix v1.0.0 (tty1)");
   println!();
 
-  // match os.kernel.vfs.read_file(PASSWD_PATH, EVERYTHING) {
-  //   Ok(bytes) => {
-  //     loop {
-  //       print!("eunix login: ");
-  //       stdout().flush().unwrap();
-  //       stdin().read_line(&mut input_username).unwrap();
-  //       print!("Password: ");
-  //       stdout().flush().unwrap();
-  //       stdin().read_line(&mut input_password).unwrap();
-  //       let input_username = input_username.trim();
-  //       // let input_password = input_password.trim();
-  //       let input_password = hex::encode(Sha256::digest(&input_password.as_bytes())); 
-  //       let contents = String::from_utf8(bytes.clone()).unwrap();
-  //       let passwds = Passwd::parse_passwds(&contents);
-  //
-  //       match passwds.iter().find(|&p| p.name == input_username) {
-  //         Some(Passwd { password, uid, gid, .. }) => {
-  //           if *password == input_password {
-  //             os.kernel.current_uid = *uid;
-  //             os.kernel.current_gid = *gid;
-  //             os.kernel.update_vfs_current_uid_gid();
-  //             break;
-  //           }
-  //         },
-  //         None => {
-  //         },
-  //       }
-  //       println!("Login incorrect");
-  //       println!();
-  //     }
-  //   },
-  //   Err(Errno::ENOENT(_)) => {
-  //     println!("login: {PASSWD_PATH} does not exist, logging as root");
-  //   },
-  //   Err(errno) => {
-  //     println!("login: unexpected error: {errno:?}");
-  //   },
-  // }
+  ////////////////////////////////////////////////////////////////////
+
+  match os.kernel.vfs.read_file(PASSWD_PATH, EVERYTHING) {
+    Ok(bytes) => {
+      loop {
+        print!("eunix login: ");
+        stdout().flush().unwrap();
+        stdin().read_line(&mut input_username).unwrap();
+        print!("Password: ");
+        stdout().flush().unwrap();
+        stdin().read_line(&mut input_password).unwrap();
+        let input_username = input_username.trim();
+        // let input_password = input_password.trim();
+        let input_password = hex::encode(Sha256::digest(&input_password.as_bytes()));
+        let contents = String::from_utf8(bytes.clone()).unwrap();
+        let passwds = Passwd::parse_passwds(&contents);
+
+        match passwds.iter().find(|&p| p.name == input_username) {
+          Some(Passwd { password, uid, gid, .. }) => {
+            if *password == input_password {
+              os.kernel.current_uid = *uid;
+              os.kernel.current_gid = *gid;
+              os.kernel.update_vfs_current_uid_gid();
+              break;
+            }
+          },
+          None => {
+          },
+        }
+        println!("Login incorrect");
+        println!();
+      }
+    },
+    Err(Errno::ENOENT(_)) => {
+      println!("login: {PASSWD_PATH} does not exist, logging as root");
+    },
+    Err(errno) => {
+      println!("login: unexpected error: {errno:?}");
+    },
+  }
+
+  ////////////////////////////////////////////////////////////////////
 
   fn caret_by_uid(uid: Id) -> String {
     if uid == ROOT_UID {
@@ -176,7 +187,7 @@ pub fn main() {
   loop {
     // A basic REPL prompt
     command.clear();
-    print!("{}", ps1);
+    print!("{ps1}");
     stdout().flush().unwrap();
     stdin().read_line(&mut command).unwrap();
 

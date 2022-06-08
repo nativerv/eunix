@@ -21,12 +21,15 @@ use super::fs::FileMode;
 use super::fs::FileStat;
 use super::fs::Filesystem;
 use super::fs::Id;
+use super::fs::NOBODY_GID;
 use super::fs::NO_ADDRESS;
 use super::fs::VDirectory;
 use super::fs::VDirectoryEntry;
 use super::fs::VINode;
 use super::fs::VFS;
 use super::kernel::Errno;
+use super::kernel::ROOT_GID;
+use super::kernel::ROOT_UID;
 use super::kernel::Times;
 use super::kernel::UnixtimeSize;
 
@@ -144,7 +147,7 @@ impl Default for INode {
       links_count: 0,
       file_size: 0,
       uid: NOBODY_UID,
-      gid: NOBODY_UID,
+      gid: NOBODY_GID,
       atime: 0,
       mtime: 0,
       ctime: 0,
@@ -229,8 +232,8 @@ impl<T: VirtFsFile> VirtFsFilesystem<T> {
       mode: FileMode::default().with_free(0),
       links_count: 0,
       file_size: 0,
-      uid: NOBODY_UID,
-      gid: NOBODY_UID,
+      uid: ROOT_UID,
+      gid: ROOT_GID,
       atime: 0,
       mtime: 0,
       ctime: 0,

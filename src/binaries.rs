@@ -149,7 +149,7 @@ pub fn ls(args: Args, kernel: &mut Kernel) -> AddressSize {
       let group = kernel
         .gid_map
         .get(&vinode.gid)
-        .unwrap_or(&format!("{}", vinode.gid))
+        .unwrap_or(&format!("<gid{}>", vinode.gid))
         .clone();
       print!("{user} {group}");
 
@@ -324,6 +324,7 @@ pub fn cat(args: Args, kernel: &mut Kernel) -> AddressSize {
     concatenated_bytes.append(&mut bytes);
   }
 
+  // Try to parse utf8 from file (most probably succeeds)
   let utf8_string = match std::str::from_utf8(&concatenated_bytes) {
       Ok(utf8_string) => utf8_string,
       Err(utf8error) => {
@@ -332,7 +333,12 @@ pub fn cat(args: Args, kernel: &mut Kernel) -> AddressSize {
       },
   };
 
-  println!("{utf8_string}");
+  // Guard for having '\n' at the end (for some reason gets inserted by nvim or whatnot)
+  if let Some(char) = utf8_string.chars().last() && char == '\n' {
+    print!("{utf8_string}")
+  } else {
+    println!("{utf8_string}")
+  };
 
   0
 }
@@ -465,26 +471,30 @@ pub fn touch(args: Args, kernel: &mut Kernel) -> AddressSize {
     Ok(BinArgs { pathname }) => {
       match kernel.vfs.lookup_path(&pathname) {
         Ok(vinode) => {
-        match kernel.vfs.change_times(&pathname, Times {
-          atime: unixtime(),
-          mtime: vinode.mtime,
-          ctime: unixtime(),
-          btime: vinode.btime,
-        }) {
-          Ok(_) => EXIT_SUCCESS,
-          Err(Errno::EACCES(_)) => {
-            println!("{arg0}: '{pathname}': Permission denied");
-            return EXIT_FAILURE
-          },
-          Err(errno) => {
-            println!("{arg0}: unexpected error: {errno:?}");
-            EXIT_FAILURE
-          },
-        }
+          match kernel.vfs.change_times(&pathname, Times {
+            atime: unixtime(),
+            mtime: vinode.mtime,
+            ctime: unixtime(),
+            btime: vinode.btime,
+          }) {
+            Ok(_) => EXIT_SUCCESS,
+            Err(Errno::EACCES(_)) => {
+              println!("{arg0}: '{pathname}': Permission denied");
+              return EXIT_FAILURE
+            },
+            Err(Errno::EPERM(_)) => {
+              println!("{arg0}: '{pathname}': Operation not permitted");
+              return EXIT_FAILURE
+            },
+            Err(errno) => {
+              println!("{arg0}: unexpected error 1: {errno:?}");
+              EXIT_FAILURE
+            },
+          }
         },
         Err(Errno::ENOENT(_)) => {
-          match VFS
-            ::parent_dir(&pathname)
+          println!("file {pathname} don't exist. creating it..");
+          match VFS::parent_dir(&pathname)
             .and_then(|parent_pathname| kernel.vfs.lookup_path(&parent_pathname))
           {
             Ok(_) => {
@@ -494,8 +504,12 @@ pub fn touch(args: Args, kernel: &mut Kernel) -> AddressSize {
                   println!("{arg0}: '{pathname}': Permission denied");
                   return EXIT_FAILURE
                 },
+                Err(Errno::EPERM(_)) => {
+                  println!("{arg0}: '{pathname}': Operation not permitted");
+                  return EXIT_FAILURE
+                },
                 Err(errno) => {
-                  println!("{arg0}: unexpected error: {errno:?}");
+                  println!("{arg0}: unexpected error 2: {errno:?}");
                   EXIT_FAILURE
                 },
               }
@@ -505,13 +519,13 @@ pub fn touch(args: Args, kernel: &mut Kernel) -> AddressSize {
               EXIT_ENOENT
             },
             Err(errno) => {
-              println!("{arg0}: unexpected error: {errno:?}");
+              println!("{arg0}: unexpected error 3: {errno:?}");
               EXIT_FAILURE
             },
           }
         },
         Err(errno) => {
-          println!("{arg0}: unexpected error: {errno:?}");
+          println!("{arg0}: unexpected error 4: {errno:?}");
           EXIT_FAILURE
         },
       }
